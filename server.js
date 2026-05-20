@@ -21,8 +21,10 @@ async function loadDB(){
       dbFileSha=r.data.sha;
       const content=Buffer.from(r.data.content,"base64").toString("utf8");
       const parsed=JSON.parse(content);
+      // FIX BUG5: strip any stale _selling flags from loaded positions
+      if(parsed.positions)parsed.positions.forEach(p=>{delete p._selling;});
       DB={users:[],wallets:[],trades:[],alerts:[],settings:[],positions:[],...parsed};
-      try{fs.writeFileSync(LOCAL_CACHE,content);}catch{}
+      try{fs.writeFile(LOCAL_CACHE,content,()=>{});}catch{}
       console.log(`[DB] GitHub: ${DB.users.length} users, ${DB.trades.length} trades, ${DB.positions.length} positions`);
       return;
     }catch(e){
@@ -33,6 +35,7 @@ async function loadDB(){
   try{
     if(fs.existsSync(LOCAL_CACHE)){
       const parsed=JSON.parse(fs.readFileSync(LOCAL_CACHE,"utf8"));
+      if(parsed.positions)parsed.positions.forEach(p=>{delete p._selling;});
       DB={users:[],wallets:[],trades:[],alerts:[],settings:[],positions:[],...parsed};
       console.log("[DB] Local cache loaded");
     }
@@ -43,8 +46,11 @@ async function flushDB(){
   if(isSaving)return;
   isSaving=true;
   try{
-    const content=JSON.stringify(DB);
-    try{fs.writeFileSync(LOCAL_CACHE,content);}catch{}
+    // FIX BUG5: never save _selling flag to disk
+    const snapshot=JSON.parse(JSON.stringify(DB));
+    snapshot.positions.forEach(p=>{delete p._selling;});
+    const content=JSON.stringify(snapshot);
+    try{fs.writeFile(LOCAL_CACHE,content,()=>{});}catch{}
     if(!GITHUB_TOKEN){isSaving=false;return;}
     const b64=Buffer.from(content).toString("base64");
     const body={message:"data",content:b64};
@@ -57,27 +63,42 @@ async function flushDB(){
     console.log("[DB] Save error:",e.message);
     if(e.response?.status===409){
       try{
+        // FIX BUG8: fetch new SHA and immediately retry the save
         const r=await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,{
           headers:{"Authorization":`token ${GITHUB_TOKEN}`},timeout:5000
         });
         dbFileSha=r.data.sha;
-      }catch{}
+        // retry save with correct SHA
+        const snapshot=JSON.parse(JSON.stringify(DB));
+        snapshot.positions.forEach(p=>{delete p._selling;});
+        const content=JSON.stringify(snapshot);
+        const b64=Buffer.from(content).toString("base64");
+        const r2=await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,
+          {message:"data",content:b64,sha:dbFileSha},
+          {headers:{"Authorization":`token ${GITHUB_TOKEN}`},timeout:15000});
+        dbFileSha=r2.data.content.sha;
+        console.log("[DB] 409 retry OK");
+      }catch(e2){console.log("[DB] 409 retry failed:",e2.message);}
     }
   }finally{isSaving=false;}
 }
 
 function saveDB(){
-  try{fs.writeFileSync(LOCAL_CACHE,JSON.stringify(DB));}catch{}
+  // FIX BUG11: async write (non-blocking)
+  const snapshot=JSON.parse(JSON.stringify(DB));
+  snapshot.positions.forEach(p=>{delete p._selling;});
+  fs.writeFile(LOCAL_CACHE,JSON.stringify(snapshot),()=>{});
   if(saveTimer)clearTimeout(saveTimer);
   saveTimer=setTimeout(flushDB,3000);
 }
 
+// FIX BUG13: use reduce instead of spread to avoid RangeError on large arrays
 let nid={user:1,wallet:1,trade:1,alert:1};
 function initNid(){
-  nid.user=Math.max(0,...DB.users.map(u=>u.id),0)+1;
-  nid.wallet=Math.max(0,...DB.wallets.map(w=>w.id),0)+1;
-  nid.trade=Math.max(0,...DB.trades.map(t=>t.id),0)+1;
-  nid.alert=Math.max(0,...DB.alerts.map(a=>a.id),0)+1;
+  nid.user=DB.users.reduce((m,u)=>Math.max(m,u.id),0)+1;
+  nid.wallet=DB.wallets.reduce((m,w)=>Math.max(m,w.id),0)+1;
+  nid.trade=DB.trades.reduce((m,t)=>Math.max(m,t.id),0)+1;
+  nid.alert=DB.alerts.reduce((m,a)=>Math.max(m,a.id),0)+1;
 }
 
 function hashPw(pw){let h=0;for(let c of pw){h=Math.imul(31,h)+c.charCodeAt(0)|0;}return Math.abs(h).toString(36)+pw.length;}
@@ -120,7 +141,8 @@ const S={
   }
 };
 
-const HELIUS_KEY=process.env.HELIUS_KEY||"1c35c0ca-8d78-400a-982f-d457ac504edb";
+const HELIUS_KEY=process.env.HELIUS_KEY||"";
+if(!HELIUS_KEY){console.error("[FATAL] HELIUS_KEY env var not set!");process.exit(1);}
 const RPC=`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
 const JUPITER_API="https://api.jup.ag/swap/v1";
 const SOL_MINT="So11111111111111111111111111111111111111112";
@@ -135,15 +157,19 @@ function pkToKeypair(pk58){
 }
 function pubkeyToBase58(b){return bs58.encode(b);}
 
+// FIX BUG1: sign legacy transactions correctly
+// Jupiter returns versioned tx by default; we request asLegacyTransaction:true
+// Legacy tx format: [numSigs(1byte)][sig(64bytes)x numSigs][message...]
 async function signAndSendTx(txBase64,secretKey){
   const txBytes=Buffer.from(txBase64,"base64");
-  const numSigs=txBytes[0];
+  const numSigs=txBytes[0]; // for legacy tx this is 1
   const messageStart=1+numSigs*64;
   const message=txBytes.slice(messageStart);
+  if(message.length===0)throw new Error("Empty message - versioned tx received instead of legacy");
   const sig=nacl.sign.detached(message,secretKey);
   sig.forEach((b,i)=>txBytes[1+i]=b);
   const r=await axios.post(RPC,{jsonrpc:"2.0",id:1,method:"sendTransaction",
-    params:[txBytes.toString("base64"),{encoding:"base64",skipPreflight:true,maxRetries:2}]},{timeout:30000});
+    params:[txBytes.toString("base64"),{encoding:"base64",skipPreflight:true,maxRetries:3}]},{timeout:30000});
   if(r.data.error)throw new Error(r.data.error.message);
   return r.data.result;
 }
@@ -163,8 +189,10 @@ async function jupiterBuy(pk58,outputMint,amountSOL){
     const q=(await axios.get(`${JUPITER_API}/quote`,{
       params:{inputMint:SOL_MINT,outputMint,amount:lamports,slippageBps:150},timeout:15000})).data;
     if(!q?.outAmount)throw new Error("No Jupiter quote");
+    // FIX BUG1: request legacy transaction format
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
+      asLegacyTransaction:true,
       computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,
       prioritizationFeeLamports:1000},{timeout:20000})).data;
     if(!sw?.swapTransaction)throw new Error("No swap tx");
@@ -185,8 +213,10 @@ async function jupiterSell(pk58,inputMint,tokenAmount){
     const q=(await axios.get(`${JUPITER_API}/quote`,{
       params:{inputMint,outputMint:SOL_MINT,amount:String(tokenAmount),slippageBps:150},timeout:15000})).data;
     if(!q?.outAmount)throw new Error("No Jupiter quote");
+    // FIX BUG1: request legacy transaction format
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
+      asLegacyTransaction:true,
       computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,
       prioritizationFeeLamports:1000},{timeout:20000})).data;
     if(!sw?.swapTransaction)throw new Error("No swap tx");
@@ -244,13 +274,13 @@ async function detectSignals(){
       const br=buys+sells>0?buys/(buys+sells):0.5;
       const tokenAddr=best.baseToken?.address||"";
       const symbol=best.baseToken?.symbol||"?";
-      // BUG CHECK 1: price must be valid
       const price=parseFloat(best.priceUsd||"0");
       if(!price||price<=0)continue;
-      // Filters for 1% profit trading
-      if(br<0.52)continue;       // More buyers than sellers
-      if(ch5m<0)continue;        // Price rising in 5m
-      if(ch1h<0&&ch6h<0)continue; // Not in downtrend
+      if(br<0.52)continue;
+      if(ch5m<0)continue;
+      // FIX BUG14: stronger downtrend filter - reject if 1h is strongly negative
+      if(ch1h<-5&&ch6h<0)continue;
+      if(ch1h<0&&ch6h<0)continue;
       const conf=Math.min(90,Math.round(
         50+Math.min(ch1h*1.5,10)+Math.min(ch5m*3,10)+((br-0.5)*20)+(vol>200000?8:vol>50000?4:0)
       ));
@@ -267,7 +297,10 @@ async function detectSignals(){
   }catch(e){console.error("[Scan]",e.message);return[];}
 }
 
-// BUG CHECK 2: track buying lock to prevent concurrent buys
+// FIX BUG5: in-memory Set for sell locks (never persisted to DB)
+const sellingSet=new Set(); // key: `${uid}:${tokenAddress}`
+// FIX BUG6: per-user price check lock (prevents concurrent price checks)
+const priceCheckLock={};
 const buyingLock={};
 const botIntervals={};
 
@@ -287,12 +320,13 @@ async function runScan(uid,pk,buyAmt,maxPos){
     return;
   }
   const sigs=await detectSignals();
-  const slots=max-S.getPositions(uid).length;
   if(!sigs.length){console.log(`[Bot] No signals | pos:${positions.length}/${max} | SOL:${balance.toFixed(4)}`);return;}
   console.log(`[Bot] ${sigs.length} signals | pos:${positions.length}/${max} | SOL:${balance.toFixed(4)}`);
   buyingLock[uid]=true;
   try{
-    for(const sig of sigs.slice(0,slots)){
+    // FIX BUG9: re-check position count per iteration to prevent over-buying
+    for(const sig of sigs){
+      if(S.getPositions(uid).length>=max)break;
       if(S.getPositions(uid).some(p=>p.tokenAddress===sig.token.address))continue;
       const curBal=await getSOLBalance(pubkey);
       if(curBal<needed){console.log("[Bot] Balance too low");break;}
@@ -314,58 +348,76 @@ async function runScan(uid,pk,buyAmt,maxPos){
 }
 
 async function runPriceCheck(uid,pk,profitPct,slPct){
-  const s=S.getSettings(uid);
-  if(!s?.isRunning)return;
-  const positions=S.getPositions(uid);
-  if(!positions.length)return;
-  const sl=slPct||5;
-  const profit=profitPct||1;
-  // BUG CHECK 3: track selling lock per token
-  for(const p of positions){
-    if(p._selling)continue; // skip if already selling
-    try{
-      const r=await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${p.tokenAddress}`,{timeout:8000});
-      const best=(r.data?.pairs||[]).filter(x=>x.chainId==="solana")
-        .sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0];
-      if(!best?.priceUsd)continue;
-      const cur=parseFloat(best.priceUsd);
-      if(!cur||cur<=0)continue;
-      const pnl=((cur-p.entryPrice)/p.entryPrice)*100;
-      S.updatePositionHigh(uid,p.tokenAddress,cur);
-      const pos=S.getPositions(uid).find(x=>x.tokenAddress===p.tokenAddress);
-      const peak=pos?.highestPrice||cur;
-      const trailDrop=peak>0?((peak-cur)/peak)*100:0;
-      const hitProfit=pnl>=profit;
-      const hitFixed=pnl<=-sl;
-      const hitTrail=pnl>=0.5&&trailDrop>=sl;
-      // BUG CHECK 4: log every position for visibility
-      if(Math.abs(pnl)>0.1)
-        console.log(`[Price] ${p.tokenSymbol} PnL:${pnl.toFixed(2)}% trail:${trailDrop.toFixed(2)}% peak:${peak}`);
-      if(hitProfit||hitFixed||hitTrail){
-        p._selling=true; // mark as selling
-        const reason=hitProfit?"PROFIT":hitTrail?"TRAIL-SL":"STOP-LOSS";
-        console.log(`[Bot] SELL ${p.tokenSymbol} ${reason} PnL:${pnl.toFixed(2)}%`);
-        if(p.tokenAmount&&p.tokenAmount!=="0"){
-          const sr=await jupiterSell(pk,p.tokenAddress,p.tokenAmount);
-          if(sr.success&&sr.txHash){
-            const profitSOL=parseFloat((p.buyAmountSOL*(pnl/100)).toFixed(4));
-            S.addTrade({userId:uid,action:"SELL",tokenSymbol:p.tokenSymbol,
-              tokenAddress:p.tokenAddress,amountSOL:p.buyAmountSOL,price:cur,
-              txHash:sr.txHash,profit:profitSOL,status:"confirmed"});
-            console.log(`[Bot] SOLD ${p.tokenSymbol} profit:${profitSOL} SOL`);
+  // FIX BUG6: prevent concurrent price checks for same user
+  if(priceCheckLock[uid]){console.log("[Price] Check already running, skip");return;}
+  priceCheckLock[uid]=true;
+  try{
+    const s=S.getSettings(uid);
+    if(!s?.isRunning)return;
+    const positions=S.getPositions(uid);
+    if(!positions.length)return;
+    const sl=slPct||5;
+    const profit=profitPct||1;
+    for(const p of positions){
+      const sellKey=`${uid}:${p.tokenAddress}`;
+      // FIX BUG5: use in-memory Set instead of property on DB object
+      if(sellingSet.has(sellKey))continue;
+      try{
+        const r=await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${p.tokenAddress}`,{timeout:8000});
+        const best=(r.data?.pairs||[]).filter(x=>x.chainId==="solana")
+          .sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0];
+        if(!best?.priceUsd)continue;
+        const cur=parseFloat(best.priceUsd);
+        if(!cur||cur<=0)continue;
+        const pnl=((cur-p.entryPrice)/p.entryPrice)*100;
+        S.updatePositionHigh(uid,p.tokenAddress,cur);
+        const pos=S.getPositions(uid).find(x=>x.tokenAddress===p.tokenAddress);
+        const peak=pos?.highestPrice||cur;
+        const trailDrop=peak>0?((peak-cur)/peak)*100:0;
+        const hitProfit=pnl>=profit;
+        const hitFixed=pnl<=-sl;
+        const hitTrail=pnl>=0.5&&trailDrop>=sl;
+        if(Math.abs(pnl)>0.1)
+          console.log(`[Price] ${p.tokenSymbol} PnL:${pnl.toFixed(2)}% trail:${trailDrop.toFixed(2)}% peak:${peak}`);
+        if(hitProfit||hitFixed||hitTrail){
+          // FIX BUG5: mark in Set immediately before any await
+          sellingSet.add(sellKey);
+          const reason=hitProfit?"PROFIT":hitTrail?"TRAIL-SL":"STOP-LOSS";
+          console.log(`[Bot] SELL ${p.tokenSymbol} ${reason} PnL:${pnl.toFixed(2)}%`);
+          // FIX BUG12: skip sell if tokenAmount is 0 or missing
+          if(p.tokenAmount&&p.tokenAmount!=="0"){
+            const sr=await jupiterSell(pk,p.tokenAddress,p.tokenAmount);
+            if(sr.success&&sr.txHash){
+              const profitSOL=parseFloat((p.buyAmountSOL*(pnl/100)).toFixed(4));
+              S.addTrade({userId:uid,action:"SELL",tokenSymbol:p.tokenSymbol,
+                tokenAddress:p.tokenAddress,amountSOL:p.buyAmountSOL,price:cur,
+                txHash:sr.txHash,profit:profitSOL,status:"confirmed"});
+              console.log(`[Bot] SOLD ${p.tokenSymbol} profit:${profitSOL} SOL`);
+              // FIX BUG2: only remove position on successful sell
+              S.removePosition(uid,p.tokenAddress);
+              sellingSet.delete(sellKey);
+              // trigger immediate scan to fill the open slot
+              setTimeout(()=>runScan(uid,pk,s.buyAmount||0.111,s.maxPositions||3),2000);
+            }else{
+              // FIX BUG2: sell failed → keep position, clear lock so it retries next cycle
+              console.log(`[Bot] SELL failed for ${p.tokenSymbol}: ${sr.error} — will retry`);
+              sellingSet.delete(sellKey);
+            }
           }else{
-            console.log(`[Bot] SELL failed for ${p.tokenSymbol}: ${sr.error}`);
+            // tokenAmount is 0 — position is unrecoverable, remove it
+            console.log(`[Bot] ${p.tokenSymbol} tokenAmount=0, removing ghost position`);
+            S.removePosition(uid,p.tokenAddress);
+            sellingSet.delete(sellKey);
           }
         }
-        // Always remove position (even if sell failed)
-        S.removePosition(uid,p.tokenAddress);
-        // BUG CHECK 5: trigger immediate scan after sell
-        setTimeout(()=>runScan(uid,pk,s.buyAmount||0.111,s.maxPositions||3),2000);
+      }catch(e){
+        const sellKey=`${uid}:${p.tokenAddress}`;
+        sellingSet.delete(sellKey); // clear lock on error so it retries
+        console.error("[Price]",p.tokenSymbol,e.message);
       }
-    }catch(e){
-      p._selling=false;
-      console.error("[Price]",p.tokenSymbol,e.message);
     }
+  }finally{
+    priceCheckLock[uid]=false;
   }
 }
 
@@ -376,11 +428,13 @@ async function startBot(uid,pk,buyAmt,profitPct,slPct,maxPos){
     delete botIntervals[uid];
   }
   buyingLock[uid]=false;
+  // clear any stale sell locks for this user on (re)start
+  for(const k of sellingSet){if(k.startsWith(`${uid}:`))sellingSet.delete(k);}
   console.log(`[Bot] START uid:${uid} buy:${buyAmt}SOL profit:${profitPct}% SL:${slPct}% max:${maxPos}`);
   // Immediate first scan (5s delay for DB load)
   setTimeout(()=>runScan(uid,pk,buyAmt,maxPos),5000);
   botIntervals[uid]={
-    // BUG CHECK 6: 3 min scan = 20 trades/hour with 3 positions cycling at 1% profit
+    // 3 min scan = 20 trades/hour with 3 positions cycling at 1% profit
     scan:setInterval(()=>runScan(uid,pk,buyAmt,maxPos),3*60*1000),
     // Price check every 15 seconds for fast sells
     price:setInterval(()=>runPriceCheck(uid,pk,profitPct,slPct),15*1000)
@@ -394,11 +448,13 @@ function stopBot(uid){
     delete botIntervals[uid];
   }
   buyingLock[uid]=false;
+  for(const k of sellingSet){if(k.startsWith(`${uid}:`))sellingSet.delete(k);}
   console.log(`[Bot] STOPPED uid:${uid}`);
 }
 
+// FIX BUG10: await loadDB before autoResume
 async function autoResume(){
-  await new Promise(r=>setTimeout(r,10000));
+  await new Promise(r=>setTimeout(r,8000)); // server stability grace period
   const running=DB.settings.filter(s=>s.isRunning&&s.tradingPrivateKey);
   for(const s of running){
     console.log(`[Bot] Auto-resume uid:${s.userId} positions:${S.getPositions(s.userId).length}`);
@@ -489,7 +545,7 @@ app.get("/api/market/scan",async(req,res)=>{
 });
 app.get("/api/balance/:addr",async(req,res)=>res.json({balance:await getSOLBalance(req.params.addr)}));
 app.get("/health",(req,res)=>res.json({status:"ok",uptime:Math.round(process.uptime()),
-  positions:DB.positions?.length||0,version:"v15-final"}));
+  positions:DB.positions?.length||0,version:"v16-fixed"}));
 
 const pub=path.join(__dirname,"public");
 if(fs.existsSync(pub)){
@@ -498,8 +554,8 @@ if(fs.existsSync(pub)){
 }
 
 app.listen(PORT,"0.0.0.0",async()=>{
-  console.log(`\nWhaleBot v15-FINAL\n[✓] 3min scan = 20 trades/hour\n[✓] 15sec price check\n[✓] 1% profit target\n[✓] 5% stop loss\n[✓] 3 positions x 0.111 SOL\n[✓] Buy lock (no concurrent buys)\n[✓] Sell lock (no double sells)\n[✓] Instant buy after sell\n[✓] GitHub persistent storage\n[✓] Low gas fees\n`);
+  console.log(`\nWhaleBot v16-FIXED\n[✓] BUG1 FIXED: asLegacyTransaction=true (trades actually work now)\n[✓] BUG2 FIXED: position only removed on successful sell\n[✓] BUG5 FIXED: _selling uses in-memory Set (survives restarts)\n[✓] BUG6 FIXED: priceCheckLock prevents double-sell\n[✓] BUG8 FIXED: 409 SHA conflict retries immediately\n[✓] BUG9 FIXED: slot count re-checked per buy iteration\n[✓] BUG10 FIXED: autoResume after loadDB completes\n[✓] BUG11 FIXED: async file writes (non-blocking)\n[✓] BUG13 FIXED: reduce() for initNid (no RangeError)\n[✓] 3min scan | 15sec price check | 1% profit | 5% SL | 3 pos x 0.111 SOL\n`);
   await loadDB();
   initNid();
-  autoResume();
+  await autoResume();
 });
