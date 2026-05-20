@@ -1,31 +1,89 @@
 const express=require("express"),path=require("path"),fs=require("fs"),axios=require("axios"),app=express(),PORT=process.env.PORT||3000;
 app.use(express.json());app.use(express.urlencoded({extended:false}));
 
-const DB_FILE="/tmp/whalebot_data.json";
-function loadDB(){try{if(fs.existsSync(DB_FILE))return JSON.parse(fs.readFileSync(DB_FILE,"utf8"));}catch{}return{users:[],wallets:[],trades:[],alerts:[],settings:[]};}
-function saveDB(db){try{fs.writeFileSync(DB_FILE,JSON.stringify(db));}catch{}}
-let DB=loadDB();
-let nid={user:Math.max(0,...DB.users.map(u=>u.id),0)+1,wallet:Math.max(0,...DB.wallets.map(w=>w.id),0)+1,trade:Math.max(0,...DB.trades.map(t=>t.id),0)+1,alert:Math.max(0,...DB.alerts.map(a=>a.id),0)+1};
+// ===== GITHUB PERSISTENT STORAGE =====
+const GITHUB_TOKEN=process.env.GITHUB_TOKEN||"YOUR_GITHUB_TOKEN";
+const GITHUB_REPO=process.env.GITHUB_REPO||"ammajanbdkr-maker/whalebot";
+const DATA_FILE="whalebot_data.json";
+const LOCAL_CACHE="/tmp/whalebot_data.json";
+
+let DB={users:[],wallets:[],trades:[],alerts:[],settings:[]};
+let dbFileSha=null;
+let saveTimer=null;
+
+async function loadDBFromGithub(){
+  try{
+    const r=await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,{
+      headers:{"Authorization":`token ${GITHUB_TOKEN}`,"Accept":"application/vnd.github.v3+json"},
+      timeout:10000
+    });
+    dbFileSha=r.data.sha;
+    const content=Buffer.from(r.data.content,"base64").toString("utf8");
+    DB=JSON.parse(content);
+    fs.writeFileSync(LOCAL_CACHE,content);
+    console.log("[DB] Loaded from GitHub:",DB.users.length,"users",DB.trades.length,"trades");
+  }catch(e){
+    if(e.response?.status===404){
+      console.log("[DB] No GitHub data yet, starting fresh");
+    }else{
+      console.log("[DB] GitHub load error:",e.message,"- using local cache");
+      try{if(fs.existsSync(LOCAL_CACHE))DB=JSON.parse(fs.readFileSync(LOCAL_CACHE,"utf8"));}catch{}
+    }
+  }
+}
+
+async function saveDBToGithub(){
+  try{
+    const content=Buffer.from(JSON.stringify(DB)).toString("base64");
+    const body={message:"bot data update",content};
+    if(dbFileSha)body.sha=dbFileSha;
+    const r=await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,body,{
+      headers:{"Authorization":`token ${GITHUB_TOKEN}`,"Accept":"application/vnd.github.v3+json"},
+      timeout:15000
+    });
+    dbFileSha=r.data.content.sha;
+    fs.writeFileSync(LOCAL_CACHE,JSON.stringify(DB));
+  }catch(e){
+    console.log("[DB] GitHub save error:",e.message,"- saved locally only");
+    try{fs.writeFileSync(LOCAL_CACHE,JSON.stringify(DB));}catch{}
+  }
+}
+
+// Debounced save - waits 3s after last change to batch saves
+function saveDB(){
+  try{fs.writeFileSync(LOCAL_CACHE,JSON.stringify(DB));}catch{}
+  if(saveTimer)clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>saveDBToGithub(),3000);
+}
+
+let nid={user:1,wallet:1,trade:1,alert:1};
+function initNid(){
+  nid.user=Math.max(0,...DB.users.map(u=>u.id),0)+1;
+  nid.wallet=Math.max(0,...DB.wallets.map(w=>w.id),0)+1;
+  nid.trade=Math.max(0,...DB.trades.map(t=>t.id),0)+1;
+  nid.alert=Math.max(0,...DB.alerts.map(a=>a.id),0)+1;
+}
+
 function hashPw(pw){let h=0;for(let c of pw){h=Math.imul(31,h)+c.charCodeAt(0)|0;}return Math.abs(h).toString(36)+pw.length;}
 
 const S={
   getUserByEmail:e=>DB.users.find(u=>u.email===e)||null,
   getUserById:id=>DB.users.find(u=>u.id===id)||null,
-  createUser:d=>{const u={id:nid.user++,...d};DB.users.push(u);saveDB(DB);return u;},
+  createUser:d=>{const u={id:nid.user++,...d};DB.users.push(u);saveDB();return u;},
   getWallets:uid=>DB.wallets.filter(w=>w.userId===uid),
-  addWallet:d=>{const w={id:nid.wallet++,...d,isActive:false};DB.wallets.push(w);saveDB(DB);return w;},
-  deleteWallet:(id,uid)=>{DB.wallets=DB.wallets.filter(w=>!(w.id===id&&w.userId===uid));saveDB(DB);},
-  setActive:(id,uid)=>{DB.wallets.forEach(w=>{if(w.userId===uid)w.isActive=(w.id===id);});saveDB(DB);},
+  addWallet:d=>{const w={id:nid.wallet++,...d,isActive:false};DB.wallets.push(w);saveDB();return w;},
+  deleteWallet:(id,uid)=>{DB.wallets=DB.wallets.filter(w=>!(w.id===id&&w.userId===uid));saveDB();},
+  setActive:(id,uid)=>{DB.wallets.forEach(w=>{if(w.userId===uid)w.isActive=(w.id===id);});saveDB();},
   getSettings:uid=>DB.settings.find(s=>s.userId===uid)||null,
-  upsertSettings:(uid,d)=>{let s=DB.settings.find(s=>s.userId===uid);if(s)Object.assign(s,d);else{s={userId:uid,buyAmount:0.035,profitTarget:3,stopLoss:10,isRunning:false,...d};DB.settings.push(s);}saveDB(DB);return s;},
-  setBotRunning:(uid,v)=>{let s=DB.settings.find(s=>s.userId===uid);if(s)s.isRunning=v;saveDB(DB);},
-  addTrade:d=>{const t={id:nid.trade++,...d,timestamp:Date.now()};DB.trades.push(t);saveDB(DB);return t;},
+  upsertSettings:(uid,d)=>{let s=DB.settings.find(s=>s.userId===uid);if(s)Object.assign(s,d);else{s={userId:uid,buyAmount:0.035,profitTarget:3,stopLoss:10,isRunning:false,...d};DB.settings.push(s);}saveDB();return s;},
+  setBotRunning:(uid,v)=>{let s=DB.settings.find(s=>s.userId===uid);if(s)s.isRunning=v;saveDB();},
+  addTrade:d=>{const t={id:nid.trade++,...d,timestamp:Date.now()};DB.trades.push(t);saveDB();return t;},
   getTrades:uid=>DB.trades.filter(t=>t.userId===uid),
-  addAlert:d=>{const a={id:nid.alert++,...d,timestamp:Date.now()};DB.alerts.push(a);saveDB(DB);return a;},
+  addAlert:d=>{const a={id:nid.alert++,...d,timestamp:Date.now()};DB.alerts.push(a);saveDB();return a;},
   getAlerts:uid=>DB.alerts.filter(a=>a.userId===uid),
 };
 
-const HELIUS_KEY=process.env.HELIUS_KEY||"1c35c0ca-8d78-400a-982f-d457ac504edb";
+const HELIUS_KEY=process.env.HELIUS_KEY||"YOUR_HELIUS_KEY";
 const RPC=`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
 const HELIUS_API=`https://api.helius.xyz/v0`;
 const JUPITER_API="https://api.jup.ag/swap/v1";
@@ -110,7 +168,6 @@ const smartMoneyCache={};
 const priceHistory={};
 const newsCache={};
 
-// ===== HELIUS WHALE DETECTION =====
 async function fetchWhaleTransactions(){
   try{
     const r=await axios.post(RPC,{jsonrpc:"2.0",id:1,method:"getSignaturesForAddress",params:["675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",{limit:50}]},{timeout:12000});
@@ -136,7 +193,6 @@ async function fetchWhaleTransactions(){
         }
       }
     }
-    // Smart money wallet tracking
     for(const wallet of SMART_MONEY_WALLETS.slice(0,3)){
       try{
         const wr=await axios.post(RPC,{jsonrpc:"2.0",id:1,method:"getSignaturesForAddress",params:[wallet,{limit:5}]},{timeout:8000});
@@ -157,7 +213,6 @@ async function fetchWhaleTransactions(){
   }catch(e){console.log(`[Whale] error: ${e.message}`);}
 }
 
-// ===== NEWS DETECTION =====
 async function fetchNews(){
   try{
     const r=await axios.get("https://api.coingecko.com/api/v3/news",{timeout:10000});
@@ -170,7 +225,6 @@ async function fetchNews(){
           if(!newsCache[kw])newsCache[kw]={count:0,lastSeen:0,sentiment:0};
           newsCache[kw].count++;
           newsCache[kw].lastSeen=Date.now();
-          // Simple sentiment: positive words
           const positive=["surge","rally","pump","moon","bullish","gain","up","high","record","launch"].some(w=>title.includes(w));
           const negative=["crash","dump","fall","bear","down","hack","scam","rug"].some(w=>title.includes(w));
           newsCache[kw].sentiment+=positive?1:negative?-1:0;
@@ -180,7 +234,6 @@ async function fetchNews(){
   }catch(e){console.log(`[News] error: ${e.message}`);}
 }
 
-// ===== RSI CALCULATION =====
 function calculateRSI(prices,period=14){
   if(prices.length<period+1)return 50;
   let gains=0,losses=0;
@@ -195,7 +248,6 @@ function calculateRSI(prices,period=14){
   return 100-(100/(1+rs));
 }
 
-// ===== MAIN SCAN =====
 const ESTABLISHED_TOKENS=[
   "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263","EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
   "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
@@ -216,7 +268,6 @@ async function detectRealWhales(){
     const results=await Promise.all(ESTABLISHED_TOKENS.map(a=>
       axios.get(`https://api.dexscreener.com/latest/dex/tokens/${a}`,{timeout:8000}).catch(()=>null)
     ));
-    
     const signals=[];
     for(const r of results){
       if(!r)continue;
@@ -229,41 +280,29 @@ async function detectRealWhales(){
       if(!pairs.length)continue;
       const best=pairs.sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0];
       const vol=best.volume?.h24||0,liq=best.liquidity?.usd||0;
-      const ch1h=best.priceChange?.h1||0,ch5m=best.priceChange?.m5||0,ch6h=best.priceChange?.h6||0;
+      const ch1h=best.priceChange?.h1||0,ch5m=best.priceChange?.m5||0;
       const txns=best.txns?.h1||{},buys=txns.buys||0,sells=txns.sells||0;
       const br=buys+sells>0?buys/(buys+sells):0.5;
       const tokenAddr=best.baseToken?.address||"";
       const symbol=best.baseToken?.symbol||"?";
-      
-      // Price history for RSI
       if(!priceHistory[tokenAddr])priceHistory[tokenAddr]=[];
       priceHistory[tokenAddr].push(parseFloat(best.priceUsd||"0"));
       if(priceHistory[tokenAddr].length>50)priceHistory[tokenAddr].shift();
       const rsi=calculateRSI(priceHistory[tokenAddr]);
-      
-      // News sentiment
       const newsSentiment=Object.entries(newsCache).filter(([k])=>symbol.toLowerCase().includes(k)).reduce((s,[,v])=>s+v.sentiment,0);
-      
-      // Whale/smart money bonus
       const whaleData=whaleCache[tokenAddr];
       const smartData=smartMoneyCache[tokenAddr];
       const whaleBonus=whaleData?.count>=2?15:0;
       const smartBonus=smartData?.wallets?.length>=1?20:0;
       const newsBonus=newsSentiment>0?10:newsSentiment<0?-10:0;
-      
-      // RSI signal - oversold bounce (RSI 30-45 = good buy zone)
       const rsiBonus=rsi>=30&&rsi<=45?15:rsi>70?-10:0;
-      
-      // Multi-DEX arbitrage check
       const allDexPrices=pairs.map(p=>parseFloat(p.priceUsd||"0")).filter(p=>p>0);
       const priceSpread=allDexPrices.length>1?(Math.max(...allDexPrices)-Math.min(...allDexPrices))/Math.min(...allDexPrices)*100:0;
       const arbBonus=priceSpread>0.5?10:0;
-      
       if(br<0.52)continue;
       if(ch1h<=0&&ch5m<=0)continue;
       if(liq<20000)continue;
-      if(rsi>75)continue; // overbought - skip
-      
+      if(rsi>75)continue;
       const conf=Math.min(95,Math.round(
         45+
         (ch1h>0?Math.min(ch1h*1.5,12):0)+
@@ -272,16 +311,13 @@ async function detectRealWhales(){
         (vol>500000?8:vol>100000?4:0)+
         whaleBonus+smartBonus+newsBonus+rsiBonus+arbBonus
       ));
-      
       if(conf<55)continue;
-      
       const reasons=[];
       if(whaleBonus>0)reasons.push(`🐋 Whale(${whaleData.count})`);
       if(smartBonus>0)reasons.push(`🧠 SmartMoney(${smartData.wallets.length})`);
       if(newsBonus>0)reasons.push("📰 +News");
       if(rsiBonus>0)reasons.push(`📊 RSI:${rsi.toFixed(0)}`);
       if(arbBonus>0)reasons.push(`💱 Arb:${priceSpread.toFixed(1)}%`);
-      
       signals.push({
         token:{address:tokenAddr,symbol,name:best.baseToken?.name||"?",priceUsd:best.priceUsd||"0",volume24h:vol,liquidity:liq,priceChange5m:ch5m,priceChange1h:ch1h,url:best.url||""},
         confidence:conf,buys,sells,buyRatio:Math.round(br*100),
@@ -296,18 +332,27 @@ async function detectRealWhales(){
   }catch(e){console.error("[Scan]",e.message);return[];}
 }
 
-// Run background tasks
 setInterval(fetchWhaleTransactions,60000);
-setInterval(fetchNews,300000); // every 5 min
+setInterval(fetchNews,300000);
 fetchWhaleTransactions();
 fetchNews();
 
 const positions={},botIntervals={};
+
+// ===== AUTO-RESUME BOT after restart =====
+async function autoResumeBots(){
+  await new Promise(r=>setTimeout(r,5000)); // wait 5s for DB to load
+  const running=DB.settings.filter(s=>s.isRunning&&s.tradingPrivateKey);
+  for(const s of running){
+    console.log(`[Bot] Auto-resuming bot for user ${s.userId}`);
+    startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.035,s.profitTarget||3,s.stopLoss||10);
+  }
+}
+
 async function startBot(uid,pk,buyAmt,profitPct,slPct){
   if(!positions[uid])positions[uid]=[];
   console.log(`[Bot] User ${uid} started buy:${buyAmt}SOL profit:${profitPct}% SL:${slPct}%`);
   try{const kp=pkToKeypair(pk);console.log(`[Bot] Wallet: ${pubkeyToBase58(kp.publicKey)}`);}catch(e){console.log(`[Bot] Keypair error: ${e.message}`);}
-  
   botIntervals[uid]={
     scan:setInterval(async()=>{
       const s=S.getSettings(uid);if(!s?.isRunning)return;
@@ -341,7 +386,7 @@ async function startBot(uid,pk,buyAmt,profitPct,slPct){
           const hitTrail=p.highestPrice&&cur<=trailingSL&&pnl>0;
           const hitFixed=pnl<=-sl;
           const hitProfit=pnl>=(profitPct||3);
-          console.log(`[Bot] ${p.tokenSymbol} PnL:${pnl.toFixed(1)}% RSI-check`);
+          console.log(`[Bot] ${p.tokenSymbol} PnL:${pnl.toFixed(1)}%`);
           if(hitProfit||hitTrail||hitFixed){
             const reason=hitProfit?"PROFIT":hitTrail?"TRAIL-SL":"FIXED-SL";
             console.log(`[Bot] SELL ${p.tokenSymbol} ${reason} PnL:${pnl.toFixed(1)}%`);
@@ -378,7 +423,15 @@ app.get("/api/market/scan",async(req,res)=>{try{res.json({signals:(await detectR
 app.get("/api/balance/:addr",async(req,res)=>res.json({address:req.params.addr,balance:await getSOLBalance(req.params.addr)}));
 app.get("/api/news",(req,res)=>res.json(newsCache));
 app.get("/api/smart-money",(req,res)=>res.json(smartMoneyCache));
+app.get("/health",(req,res)=>res.json({status:"ok",uptime:process.uptime()}));
 
 const pub=path.join(__dirname,"public");
 if(fs.existsSync(pub)){app.use(express.static(pub));app.get("*",(req,res)=>{if(!req.path.startsWith("/api"))res.sendFile(path.join(pub,"index.html"));});}
-app.listen(PORT,"0.0.0.0",()=>console.log(`\nWhaleBot v13 LIVE\n[✓] Smart Money Tracking\n[✓] RSI/Momentum\n[✓] News Detection\n[✓] Multi-DEX\n[✓] Trailing Stop Loss\n[✓] 25+ Tokens\n`));
+
+// Start server and load DB
+app.listen(PORT,"0.0.0.0",async()=>{
+  console.log(`\nWhaleBot v14 LIVE - GitHub Persistent Storage\n[✓] Data survives restarts\n[✓] Auto-resume bot\n[✓] Smart Money Tracking\n[✓] RSI/Momentum\n[✓] News Detection\n[✓] Multi-DEX\n[✓] Trailing Stop Loss\n[✓] 25+ Tokens\n`);
+  await loadDBFromGithub();
+  initNid();
+  autoResumeBots();
+});
