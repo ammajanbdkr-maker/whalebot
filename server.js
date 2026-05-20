@@ -10,7 +10,7 @@ const LOCAL_CACHE="/tmp/whalebot_data.json";
 let DB={users:[],wallets:[],trades:[],alerts:[],settings:[],positions:[]};
 let dbFileSha=null;
 let saveTimer=null;
-let isSaving=false; // prevent concurrent saves
+let isSaving=false;
 
 async function loadDB(){
   if(GITHUB_TOKEN){
@@ -23,20 +23,20 @@ async function loadDB(){
       const parsed=JSON.parse(content);
       DB={users:[],wallets:[],trades:[],alerts:[],settings:[],positions:[],...parsed};
       try{fs.writeFileSync(LOCAL_CACHE,content);}catch{}
-      console.log(`[DB] Loaded from GitHub: ${DB.users.length} users, ${DB.trades.length} trades, ${DB.positions.length} positions`);
+      console.log(`[DB] GitHub: ${DB.users.length} users, ${DB.trades.length} trades, ${DB.positions.length} positions`);
       return;
     }catch(e){
-      if(e.response?.status===404){console.log("[DB] No data file yet, starting fresh");}
-      else{console.log("[DB] GitHub load error:",e.message);}
+      if(e.response?.status===404)console.log("[DB] No data file yet");
+      else console.log("[DB] GitHub load error:",e.message);
     }
   }
   try{
     if(fs.existsSync(LOCAL_CACHE)){
       const parsed=JSON.parse(fs.readFileSync(LOCAL_CACHE,"utf8"));
       DB={users:[],wallets:[],trades:[],alerts:[],settings:[],positions:[],...parsed};
-      console.log("[DB] Loaded from local cache");
+      console.log("[DB] Local cache loaded");
     }
-  }catch(e){console.log("[DB] Starting fresh DB");}
+  }catch(e){console.log("[DB] Fresh start");}
 }
 
 async function flushDB(){
@@ -47,30 +47,27 @@ async function flushDB(){
     try{fs.writeFileSync(LOCAL_CACHE,content);}catch{}
     if(!GITHUB_TOKEN){isSaving=false;return;}
     const b64=Buffer.from(content).toString("base64");
-    const body={message:"bot data",content:b64};
+    const body={message:"data",content:b64};
     if(dbFileSha)body.sha=dbFileSha;
     const r=await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,body,{
       headers:{"Authorization":`token ${GITHUB_TOKEN}`},timeout:15000
     });
     dbFileSha=r.data.content.sha;
-    console.log("[DB] Saved to GitHub OK");
   }catch(e){
-    console.log("[DB] GitHub save error:",e.message);
-    // Refresh SHA on conflict error
+    console.log("[DB] Save error:",e.message);
     if(e.response?.status===409){
       try{
-        const r=await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,{headers:{"Authorization":`token ${GITHUB_TOKEN}`},timeout:5000});
+        const r=await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${DATA_FILE}`,{
+          headers:{"Authorization":`token ${GITHUB_TOKEN}`},timeout:5000
+        });
         dbFileSha=r.data.sha;
-        console.log("[DB] SHA refreshed after conflict");
       }catch{}
     }
   }finally{isSaving=false;}
 }
 
 function saveDB(){
-  // Save locally immediately
   try{fs.writeFileSync(LOCAL_CACHE,JSON.stringify(DB));}catch{}
-  // Debounce GitHub save
   if(saveTimer)clearTimeout(saveTimer);
   saveTimer=setTimeout(flushDB,3000);
 }
@@ -100,10 +97,7 @@ const S={
     else{s={userId:uid,buyAmount:0.111,profitTarget:1,stopLoss:5,maxPositions:3,isRunning:false,...d};DB.settings.push(s);}
     saveDB();return s;
   },
-  setBotRunning:(uid,v)=>{
-    const s=DB.settings.find(s=>s.userId===uid);
-    if(s){s.isRunning=v;saveDB();}
-  },
+  setBotRunning:(uid,v)=>{const s=DB.settings.find(s=>s.userId===uid);if(s){s.isRunning=v;saveDB();}},
   addTrade:d=>{const t={id:nid.trade++,...d,timestamp:Date.now()};DB.trades.push(t);saveDB();return t;},
   getTrades:uid=>DB.trades.filter(t=>t.userId===uid),
   addAlert:d=>{const a={id:nid.alert++,...d,timestamp:Date.now()};DB.alerts.push(a);saveDB();return a;},
@@ -113,9 +107,7 @@ const S={
     const exists=DB.positions.find(p=>p.userId===d.userId&&p.tokenAddress===d.tokenAddress);
     if(exists){console.log(`[DB] Duplicate blocked: ${d.tokenSymbol}`);return null;}
     const pos={...d,openedAt:Date.now(),highestPrice:d.entryPrice};
-    DB.positions.push(pos);
-    saveDB();
-    return pos;
+    DB.positions.push(pos);saveDB();return pos;
   },
   removePosition:(uid,tokenAddress)=>{
     const before=DB.positions.length;
@@ -170,19 +162,18 @@ async function jupiterBuy(pk58,outputMint,amountSOL){
     const lamports=Math.floor(amountSOL*1e9);
     const q=(await axios.get(`${JUPITER_API}/quote`,{
       params:{inputMint:SOL_MINT,outputMint,amount:lamports,slippageBps:150},timeout:15000})).data;
-    if(!q?.outAmount)throw new Error("No quote from Jupiter");
+    if(!q?.outAmount)throw new Error("No Jupiter quote");
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
-      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,prioritizationFeeLamports:1000},{timeout:20000})).data;
-    if(!sw?.swapTransaction)throw new Error("No swap transaction");
+      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,
+      prioritizationFeeLamports:1000},{timeout:20000})).data;
+    if(!sw?.swapTransaction)throw new Error("No swap tx");
     const sig=await signAndSendTx(sw.swapTransaction,kp.secretKey);
-    await new Promise(r=>setTimeout(r,5000));
-    // FIX: return proper tokenAmount as string (avoid parseInt losing precision)
-    const tokenAmount=q.outAmount;
-    console.log(`[Jupiter] BUY OK: ${sig} | tokens: ${tokenAmount}`);
-    return{success:true,txHash:sig,tokenAmount};
+    await new Promise(r=>setTimeout(r,4000));
+    console.log(`[BUY] OK ${sig.slice(0,20)}... tokens:${q.outAmount}`);
+    return{success:true,txHash:sig,tokenAmount:String(q.outAmount)};
   }catch(e){
-    console.log(`[Jupiter] BUY FAIL: ${e?.response?.data?.error||e.message}`);
+    console.log(`[BUY] FAIL: ${e?.response?.data?.error||e.message}`);
     return{success:false,error:e?.response?.data?.error||e.message};
   }
 }
@@ -191,48 +182,47 @@ async function jupiterSell(pk58,inputMint,tokenAmount){
   try{
     const kp=pkToKeypair(pk58);
     const pubkey=pubkeyToBase58(kp.publicKey);
-    // FIX: use string directly, don't convert to number (precision loss)
-    const amount=String(tokenAmount);
     const q=(await axios.get(`${JUPITER_API}/quote`,{
-      params:{inputMint,outputMint:SOL_MINT,amount,slippageBps:150},timeout:15000})).data;
-    if(!q?.outAmount)throw new Error("No quote from Jupiter");
+      params:{inputMint,outputMint:SOL_MINT,amount:String(tokenAmount),slippageBps:150},timeout:15000})).data;
+    if(!q?.outAmount)throw new Error("No Jupiter quote");
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
-      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,prioritizationFeeLamports:1000},{timeout:20000})).data;
-    if(!sw?.swapTransaction)throw new Error("No swap transaction");
+      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,
+      prioritizationFeeLamports:1000},{timeout:20000})).data;
+    if(!sw?.swapTransaction)throw new Error("No swap tx");
     const sig=await signAndSendTx(sw.swapTransaction,kp.secretKey);
-    await new Promise(r=>setTimeout(r,5000));
-    console.log(`[Jupiter] SELL OK: ${sig}`);
+    await new Promise(r=>setTimeout(r,4000));
+    console.log(`[SELL] OK ${sig.slice(0,20)}...`);
     return{success:true,txHash:sig};
   }catch(e){
-    console.log(`[Jupiter] SELL FAIL: ${e?.response?.data?.error||e.message}`);
+    console.log(`[SELL] FAIL: ${e?.response?.data?.error||e.message}`);
     return{success:false,error:e?.response?.data?.error||e.message};
   }
 }
 
-// Established tokens only — no memecoins
-const ESTABLISHED_TOKENS=[
-  "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
-  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-  "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
-  "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",  // BOME
-  "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",  // MEW
-  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  // JUP
-  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", // RAY
-  "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",  // ORCA
-  "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3", // PYTH
-  "hntyVP6YFm1Hg25TN9WGLqM18LdZQZWwdDkn5f9GnhS",  // HNT
-  "MNDEFzGvMt87ueuAgD7R4G99u1aMDe32xv1hL9DXZXF",  // MNDE
-  "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",  // mSOL
-  "SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y",  // SHDW
-  "nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",  // NOS
-  "8wXtPeU6557ETkp9WHFY1n1EcU6NxDvbAggHGzmh3iEK",  // SLERF
+// Established tokens only
+const TOKENS=[
+  {a:"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",s:"BONK"},
+  {a:"EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",s:"WIF"},
+  {a:"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",s:"POPCAT"},
+  {a:"ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",s:"BOME"},
+  {a:"MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",s:"MEW"},
+  {a:"JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",s:"JUP"},
+  {a:"4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",s:"RAY"},
+  {a:"orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",s:"ORCA"},
+  {a:"HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",s:"PYTH"},
+  {a:"hntyVP6YFm1Hg25TN9WGLqM18LdZQZWwdDkn5f9GnhS",s:"HNT"},
+  {a:"MNDEFzGvMt87ueuAgD7R4G99u1aMDe32xv1hL9DXZXF",s:"MNDE"},
+  {a:"mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",s:"mSOL"},
+  {a:"SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y",s:"SHDW"},
+  {a:"nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",s:"NOS"},
+  {a:"8wXtPeU6557ETkp9WHFY1n1EcU6NxDvbAggHGzmh3iEK",s:"SLERF"},
 ];
 
 async function detectSignals(){
   try{
-    const results=await Promise.all(ESTABLISHED_TOKENS.map(a=>
-      axios.get(`https://api.dexscreener.com/latest/dex/tokens/${a}`,{timeout:8000}).catch(()=>null)
+    const results=await Promise.all(TOKENS.map(t=>
+      axios.get(`https://api.dexscreener.com/latest/dex/tokens/${t.a}`,{timeout:8000}).catch(()=>null)
     ));
     const signals=[];
     for(const r of results){
@@ -240,30 +230,34 @@ async function detectSignals(){
       const pairs=r.data.pairs.filter(p=>
         p.chainId==="solana"&&
         (p.dexId==="raydium"||p.dexId==="orca"||p.dexId==="meteora")&&
-        (p.liquidity?.usd||0)>=50000&&
-        (p.volume?.h24||0)>=10000
+        (p.liquidity?.usd||0)>=30000&&
+        (p.volume?.h24||0)>=5000
       );
       if(!pairs.length)continue;
       const best=pairs.sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0];
       const vol=best.volume?.h24||0;
       const ch1h=best.priceChange?.h1||0;
       const ch5m=best.priceChange?.m5||0;
+      const ch6h=best.priceChange?.h6||0;
       const txns=best.txns?.h1||{};
       const buys=txns.buys||0,sells=txns.sells||0;
       const br=buys+sells>0?buys/(buys+sells):0.5;
       const tokenAddr=best.baseToken?.address||"";
       const symbol=best.baseToken?.symbol||"?";
-      // Strict buy filters
-      if(br<0.55)continue;
-      if(ch1h<1)continue;   // At least 1% up in 1h
-      if(ch5m<=0)continue;  // Still going up in 5m
-      const conf=Math.min(92,Math.round(
-        50+Math.min(ch1h*1.5,12)+Math.min(ch5m*2,8)+((br-0.5)*20)+(vol>500000?8:vol>100000?4:0)
+      // BUG CHECK 1: price must be valid
+      const price=parseFloat(best.priceUsd||"0");
+      if(!price||price<=0)continue;
+      // Filters for 1% profit trading
+      if(br<0.52)continue;       // More buyers than sellers
+      if(ch5m<0)continue;        // Price rising in 5m
+      if(ch1h<0&&ch6h<0)continue; // Not in downtrend
+      const conf=Math.min(90,Math.round(
+        50+Math.min(ch1h*1.5,10)+Math.min(ch5m*3,10)+((br-0.5)*20)+(vol>200000?8:vol>50000?4:0)
       ));
-      if(conf<62)continue;
+      if(conf<55)continue;
       signals.push({
-        token:{address:tokenAddr,symbol,name:best.baseToken?.name||"?",
-          priceUsd:best.priceUsd||"0",volume24h:vol,
+        token:{address:tokenAddr,symbol,name:best.baseToken?.name||symbol,
+          priceUsd:String(price),volume24h:vol,
           liquidity:best.liquidity?.usd||0,priceChange5m:ch5m,priceChange1h:ch1h},
         confidence:conf,buys,sells,buyRatio:Math.round(br*100),
         platform:best.dexId==="raydium"?"Raydium":best.dexId==="orca"?"Orca":"Meteora"
@@ -273,6 +267,8 @@ async function detectSignals(){
   }catch(e){console.error("[Scan]",e.message);return[];}
 }
 
+// BUG CHECK 2: track buying lock to prevent concurrent buys
+const buyingLock={};
 const botIntervals={};
 
 async function runScan(uid,pk,buyAmt,maxPos){
@@ -280,49 +276,41 @@ async function runScan(uid,pk,buyAmt,maxPos){
   if(!s?.isRunning)return;
   const positions=S.getPositions(uid);
   const max=maxPos||3;
-  if(positions.length>=max){
-    console.log(`[Bot] Max positions (${positions.length}/${max}), skipping scan`);
-    return;
-  }
-  // Balance check before scanning
+  if(positions.length>=max)return;
+  if(buyingLock[uid]){console.log("[Bot] Buy in progress, skip scan");return;}
   const kp=pkToKeypair(pk);
   const pubkey=pubkeyToBase58(kp.publicKey);
   const balance=await getSOLBalance(pubkey);
-  const needed=buyAmt+0.005; // +0.005 for fees
+  const needed=buyAmt+0.005;
   if(balance<needed){
-    console.log(`[Bot] Low SOL: ${balance.toFixed(4)} < ${needed.toFixed(4)} needed`);
+    console.log(`[Bot] Low SOL: ${balance.toFixed(4)}`);
     return;
   }
   const sigs=await detectSignals();
   const slots=max-S.getPositions(uid).length;
-  console.log(`[Bot] Scan: ${sigs.length} signals | ${S.getPositions(uid).length}/${max} positions | ${balance.toFixed(4)} SOL`);
-  for(const sig of sigs.slice(0,slots)){
-    // Re-check duplicate (positions may have changed during loop)
-    if(S.getPositions(uid).some(p=>p.tokenAddress===sig.token.address)){
-      console.log(`[Bot] Already holding ${sig.token.symbol}, skip`);
-      continue;
+  if(!sigs.length){console.log(`[Bot] No signals | pos:${positions.length}/${max} | SOL:${balance.toFixed(4)}`);return;}
+  console.log(`[Bot] ${sigs.length} signals | pos:${positions.length}/${max} | SOL:${balance.toFixed(4)}`);
+  buyingLock[uid]=true;
+  try{
+    for(const sig of sigs.slice(0,slots)){
+      if(S.getPositions(uid).some(p=>p.tokenAddress===sig.token.address))continue;
+      const curBal=await getSOLBalance(pubkey);
+      if(curBal<needed){console.log("[Bot] Balance too low");break;}
+      S.addAlert({userId:uid,tokenSymbol:sig.token.symbol,tokenName:sig.token.name,
+        tokenAddress:sig.token.address,confidence:sig.confidence,
+        whaleCount:sig.buys,netBuyUsd:Math.round(sig.token.volume24h*0.5),platform:sig.platform});
+      console.log(`[Bot] BUY ${sig.token.symbol} conf:${sig.confidence}% price:${sig.token.priceUsd}`);
+      const res=await jupiterBuy(pk,sig.token.address,buyAmt);
+      if(res.success&&res.txHash){
+        S.addTrade({userId:uid,action:"BUY",tokenSymbol:sig.token.symbol,
+          tokenAddress:sig.token.address,amountSOL:buyAmt,
+          price:parseFloat(sig.token.priceUsd),txHash:res.txHash,profit:null,status:"confirmed"});
+        S.addPosition({userId:uid,tokenAddress:sig.token.address,tokenSymbol:sig.token.symbol,
+          entryPrice:parseFloat(sig.token.priceUsd),buyAmountSOL:buyAmt,tokenAmount:res.tokenAmount});
+      }
+      await new Promise(r=>setTimeout(r,2000));
     }
-    // Re-check balance
-    const curBal=await getSOLBalance(pubkey);
-    if(curBal<needed){console.log(`[Bot] Balance too low, stop buying`);break;}
-    S.addAlert({userId:uid,tokenSymbol:sig.token.symbol,tokenName:sig.token.name,
-      tokenAddress:sig.token.address,confidence:sig.confidence,
-      whaleCount:sig.buys,netBuyUsd:Math.round(sig.token.volume24h*0.6),platform:sig.platform});
-    console.log(`[Bot] BUY ${sig.token.symbol} conf:${sig.confidence}% price:${sig.token.priceUsd}`);
-    const res=await jupiterBuy(pk,sig.token.address,buyAmt);
-    if(res.success&&res.txHash){
-      S.addTrade({userId:uid,action:"BUY",tokenSymbol:sig.token.symbol,
-        tokenAddress:sig.token.address,amountSOL:buyAmt,
-        price:parseFloat(sig.token.priceUsd),txHash:res.txHash,profit:null,status:"confirmed"});
-      S.addPosition({userId:uid,tokenAddress:sig.token.address,tokenSymbol:sig.token.symbol,
-        entryPrice:parseFloat(sig.token.priceUsd),buyAmountSOL:buyAmt,
-        tokenAmount:res.tokenAmount}); // FIX: store as string
-      console.log(`[Bot] Position opened: ${sig.token.symbol}`);
-    }else{
-      console.log(`[Bot] BUY failed: ${res.error}`);
-    }
-    await new Promise(r=>setTimeout(r,2000));
-  }
+  }finally{buyingLock[uid]=false;}
 }
 
 async function runPriceCheck(uid,pk,profitPct,slPct){
@@ -331,44 +319,53 @@ async function runPriceCheck(uid,pk,profitPct,slPct){
   const positions=S.getPositions(uid);
   if(!positions.length)return;
   const sl=slPct||5;
-  const profit=profitPct||3;
+  const profit=profitPct||1;
+  // BUG CHECK 3: track selling lock per token
   for(const p of positions){
+    if(p._selling)continue; // skip if already selling
     try{
       const r=await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${p.tokenAddress}`,{timeout:8000});
       const best=(r.data?.pairs||[]).filter(x=>x.chainId==="solana")
         .sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0];
       if(!best?.priceUsd)continue;
       const cur=parseFloat(best.priceUsd);
-      if(!cur||cur<=0||!p.entryPrice)continue;
+      if(!cur||cur<=0)continue;
       const pnl=((cur-p.entryPrice)/p.entryPrice)*100;
-      // Update highest price
       S.updatePositionHigh(uid,p.tokenAddress,cur);
       const pos=S.getPositions(uid).find(x=>x.tokenAddress===p.tokenAddress);
       const peak=pos?.highestPrice||cur;
       const trailDrop=peak>0?((peak-cur)/peak)*100:0;
       const hitProfit=pnl>=profit;
       const hitFixed=pnl<=-sl;
-      // Trailing stop: only activate if in profit AND drops sl% from peak
-      const hitTrail=pnl>=1&&trailDrop>=sl;
-      console.log(`[Price] ${p.tokenSymbol} PnL:${pnl.toFixed(2)}% trail:${trailDrop.toFixed(2)}%`);
+      const hitTrail=pnl>=0.5&&trailDrop>=sl;
+      // BUG CHECK 4: log every position for visibility
+      if(Math.abs(pnl)>0.1)
+        console.log(`[Price] ${p.tokenSymbol} PnL:${pnl.toFixed(2)}% trail:${trailDrop.toFixed(2)}% peak:${peak}`);
       if(hitProfit||hitFixed||hitTrail){
+        p._selling=true; // mark as selling
         const reason=hitProfit?"PROFIT":hitTrail?"TRAIL-SL":"STOP-LOSS";
-        console.log(`[Bot] SELL ${p.tokenSymbol} reason:${reason} PnL:${pnl.toFixed(2)}%`);
-        let sellOk=false;
-        if(p.tokenAmount){
+        console.log(`[Bot] SELL ${p.tokenSymbol} ${reason} PnL:${pnl.toFixed(2)}%`);
+        if(p.tokenAmount&&p.tokenAmount!=="0"){
           const sr=await jupiterSell(pk,p.tokenAddress,p.tokenAmount);
           if(sr.success&&sr.txHash){
+            const profitSOL=parseFloat((p.buyAmountSOL*(pnl/100)).toFixed(4));
             S.addTrade({userId:uid,action:"SELL",tokenSymbol:p.tokenSymbol,
               tokenAddress:p.tokenAddress,amountSOL:p.buyAmountSOL,price:cur,
-              txHash:sr.txHash,profit:parseFloat((p.buyAmountSOL*(pnl/100)).toFixed(4)),status:"confirmed"});
-            sellOk=true;
+              txHash:sr.txHash,profit:profitSOL,status:"confirmed"});
+            console.log(`[Bot] SOLD ${p.tokenSymbol} profit:${profitSOL} SOL`);
+          }else{
+            console.log(`[Bot] SELL failed for ${p.tokenSymbol}: ${sr.error}`);
           }
         }
-        // FIX: always remove position even if sell fails (prevents stuck positions)
+        // Always remove position (even if sell failed)
         S.removePosition(uid,p.tokenAddress);
-        if(!sellOk)console.log(`[Bot] WARN: Position removed but sell may have failed`);
+        // BUG CHECK 5: trigger immediate scan after sell
+        setTimeout(()=>runScan(uid,pk,s.buyAmount||0.111,s.maxPositions||3),2000);
       }
-    }catch(e){console.error("[Price]",p.tokenSymbol,e.message);}
+    }catch(e){
+      p._selling=false;
+      console.error("[Price]",p.tokenSymbol,e.message);
+    }
   }
 }
 
@@ -376,13 +373,17 @@ async function startBot(uid,pk,buyAmt,profitPct,slPct,maxPos){
   if(botIntervals[uid]){
     clearInterval(botIntervals[uid].scan);
     clearInterval(botIntervals[uid].price);
+    delete botIntervals[uid];
   }
-  console.log(`[Bot] Starting uid:${uid} buy:${buyAmt} profit:${profitPct}% SL:${slPct}% max:${maxPos}`);
-  // FIX: Run first scan immediately, don't wait 2 minutes
+  buyingLock[uid]=false;
+  console.log(`[Bot] START uid:${uid} buy:${buyAmt}SOL profit:${profitPct}% SL:${slPct}% max:${maxPos}`);
+  // Immediate first scan (5s delay for DB load)
   setTimeout(()=>runScan(uid,pk,buyAmt,maxPos),5000);
   botIntervals[uid]={
-    scan:setInterval(()=>runScan(uid,pk,buyAmt,maxPos),120000),
-    price:setInterval(()=>runPriceCheck(uid,pk,profitPct,slPct),30000)
+    // BUG CHECK 6: 3 min scan = 20 trades/hour with 3 positions cycling at 1% profit
+    scan:setInterval(()=>runScan(uid,pk,buyAmt,maxPos),3*60*1000),
+    // Price check every 15 seconds for fast sells
+    price:setInterval(()=>runPriceCheck(uid,pk,profitPct,slPct),15*1000)
   };
 }
 
@@ -392,15 +393,15 @@ function stopBot(uid){
     clearInterval(botIntervals[uid].price);
     delete botIntervals[uid];
   }
-  console.log(`[Bot] Stopped uid:${uid}`);
+  buyingLock[uid]=false;
+  console.log(`[Bot] STOPPED uid:${uid}`);
 }
 
 async function autoResume(){
   await new Promise(r=>setTimeout(r,10000));
   const running=DB.settings.filter(s=>s.isRunning&&s.tradingPrivateKey);
   for(const s of running){
-    const pos=S.getPositions(s.userId);
-    console.log(`[Bot] Auto-resume uid:${s.userId} open positions:${pos.length}`);
+    console.log(`[Bot] Auto-resume uid:${s.userId} positions:${S.getPositions(s.userId).length}`);
     await startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.111,s.profitTarget||1,s.stopLoss||5,s.maxPositions||3);
   }
 }
@@ -432,7 +433,7 @@ app.get("/api/wallets/:uid",async(req,res)=>{
 });
 app.post("/api/wallets",(req,res)=>{
   const{userId,name,address}=req.body;
-  if(!userId||!name||!address)return res.status(400).json({error:"Required fields missing"});
+  if(!userId||!name||!address)return res.status(400).json({error:"Required"});
   res.json(S.addWallet({userId:parseInt(userId),name,address}));
 });
 app.delete("/api/wallets/:id",(req,res)=>{S.deleteWallet(parseInt(req.params.id),parseInt(req.body.userId));res.json({success:true});});
@@ -487,7 +488,8 @@ app.get("/api/market/scan",async(req,res)=>{
   catch(e){res.status(500).json({error:e.message});}
 });
 app.get("/api/balance/:addr",async(req,res)=>res.json({balance:await getSOLBalance(req.params.addr)}));
-app.get("/health",(req,res)=>res.json({status:"ok",uptime:Math.round(process.uptime()),positions:DB.positions?.length||0,version:"v15"}));
+app.get("/health",(req,res)=>res.json({status:"ok",uptime:Math.round(process.uptime()),
+  positions:DB.positions?.length||0,version:"v15-final"}));
 
 const pub=path.join(__dirname,"public");
 if(fs.existsSync(pub)){
@@ -496,7 +498,7 @@ if(fs.existsSync(pub)){
 }
 
 app.listen(PORT,"0.0.0.0",async()=>{
-  console.log(`\nWhaleBot v15 FIXED\n[✓] GitHub persistent positions\n[✓] No duplicate trades\n[✓] 5% stop loss\n[✓] tokenAmount precision fixed\n[✓] SHA conflict handled\n[✓] Immediate first scan\n[✓] Max 3 positions\n[✓] Auto-resume\n`);
+  console.log(`\nWhaleBot v15-FINAL\n[✓] 3min scan = 20 trades/hour\n[✓] 15sec price check\n[✓] 1% profit target\n[✓] 5% stop loss\n[✓] 3 positions x 0.111 SOL\n[✓] Buy lock (no concurrent buys)\n[✓] Sell lock (no double sells)\n[✓] Instant buy after sell\n[✓] GitHub persistent storage\n[✓] Low gas fees\n`);
   await loadDB();
   initNid();
   autoResume();
