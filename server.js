@@ -97,7 +97,7 @@ const S={
   upsertSettings:(uid,d)=>{
     let s=DB.settings.find(s=>s.userId===uid);
     if(s)Object.assign(s,d);
-    else{s={userId:uid,buyAmount:0.035,profitTarget:3,stopLoss:5,maxPositions:3,isRunning:false,...d};DB.settings.push(s);}
+    else{s={userId:uid,buyAmount:0.111,profitTarget:1,stopLoss:5,maxPositions:3,isRunning:false,...d};DB.settings.push(s);}
     saveDB();return s;
   },
   setBotRunning:(uid,v)=>{
@@ -401,7 +401,7 @@ async function autoResume(){
   for(const s of running){
     const pos=S.getPositions(s.userId);
     console.log(`[Bot] Auto-resume uid:${s.userId} open positions:${pos.length}`);
-    await startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.035,s.profitTarget||3,s.stopLoss||5,s.maxPositions||3);
+    await startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.111,s.profitTarget||1,s.stopLoss||5,s.maxPositions||3);
   }
 }
 
@@ -440,7 +440,7 @@ app.post("/api/wallets/:id/activate",(req,res)=>{S.setActive(parseInt(req.params
 app.get("/api/bot-settings/:uid",(req,res)=>{
   const s=S.getSettings(parseInt(req.params.uid));
   if(s){const{tradingPrivateKey:pk,...safe}=s;return res.json({...safe,hasTradingWallet:!!pk});}
-  res.json({buyAmount:0.035,profitTarget:3,stopLoss:5,maxPositions:3,isRunning:false,hasTradingWallet:false});
+  res.json({buyAmount:0.111,profitTarget:1,stopLoss:5,maxPositions:3,isRunning:false,hasTradingWallet:false});
 });
 app.post("/api/bot-settings/:uid",(req,res)=>{
   const uid=parseInt(req.params.uid);
@@ -460,7 +460,7 @@ app.post("/api/bot/start/:uid",async(req,res)=>{
   const s=S.getSettings(uid);
   if(!s?.tradingPrivateKey)return res.status(400).json({error:"Add private key in Settings first"});
   S.setBotRunning(uid,true);
-  await startBot(uid,s.tradingPrivateKey,s.buyAmount||0.035,s.profitTarget||3,s.stopLoss||5,s.maxPositions||3);
+  await startBot(uid,s.tradingPrivateKey,s.buyAmount||0.111,s.profitTarget||1,s.stopLoss||5,s.maxPositions||3);
   res.json({success:true,message:"Bot started!"});
 });
 app.post("/api/bot/stop/:uid",async(req,res)=>{
