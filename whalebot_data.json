@@ -1,1 +1,1 @@
-{"users":[],"wallets":[],"trades":[],"alerts":[],"settings":[{"userId":1,"buyAmount":0.035,"profitTarget":3,"stopLoss":10,"isRunning":false,"tradingPrivateKey":"CUXt1gn6AETC2XLss7tyMjhQEQcU8Eh8Eq1KUQbAgpVXUybSrebKMdC82LYVMhme9aSQmCiBz8bsJGUJZj7vijZ"}]}
+{"users":[],"wallets":[],"trades":[],"alerts":[],"settings":[{"userId":1,"buyAmount":0.035,"profitTarget":3,"stopLoss":10,"isRunning":true,"tradingPrivateKey":"CUXt1gn6AETC2XLss7tyMjhQEQcU8Eh8Eq1KUQbAgpVXUybSrebKMdC82LYVMhme9aSQmCiBz8bsJGUJZj7vijZ"}]}
