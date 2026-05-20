@@ -151,7 +151,7 @@ async function signAndSendTx(txBase64,secretKey){
   const sig=nacl.sign.detached(message,secretKey);
   sig.forEach((b,i)=>txBytes[1+i]=b);
   const r=await axios.post(RPC,{jsonrpc:"2.0",id:1,method:"sendTransaction",
-    params:[txBytes.toString("base64"),{encoding:"base64",skipPreflight:false,maxRetries:3}]},{timeout:30000});
+    params:[txBytes.toString("base64"),{encoding:"base64",skipPreflight:true,maxRetries:2}]},{timeout:30000});
   if(r.data.error)throw new Error(r.data.error.message);
   return r.data.result;
 }
@@ -169,11 +169,11 @@ async function jupiterBuy(pk58,outputMint,amountSOL){
     const pubkey=pubkeyToBase58(kp.publicKey);
     const lamports=Math.floor(amountSOL*1e9);
     const q=(await axios.get(`${JUPITER_API}/quote`,{
-      params:{inputMint:SOL_MINT,outputMint,amount:lamports,slippageBps:300},timeout:15000})).data;
+      params:{inputMint:SOL_MINT,outputMint,amount:lamports,slippageBps:150},timeout:15000})).data;
     if(!q?.outAmount)throw new Error("No quote from Jupiter");
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
-      computeUnitPriceMicroLamports:"auto",dynamicComputeUnitLimit:true},{timeout:20000})).data;
+      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,prioritizationFeeLamports:1000},{timeout:20000})).data;
     if(!sw?.swapTransaction)throw new Error("No swap transaction");
     const sig=await signAndSendTx(sw.swapTransaction,kp.secretKey);
     await new Promise(r=>setTimeout(r,5000));
@@ -194,11 +194,11 @@ async function jupiterSell(pk58,inputMint,tokenAmount){
     // FIX: use string directly, don't convert to number (precision loss)
     const amount=String(tokenAmount);
     const q=(await axios.get(`${JUPITER_API}/quote`,{
-      params:{inputMint,outputMint:SOL_MINT,amount,slippageBps:300},timeout:15000})).data;
+      params:{inputMint,outputMint:SOL_MINT,amount,slippageBps:150},timeout:15000})).data;
     if(!q?.outAmount)throw new Error("No quote from Jupiter");
     const sw=(await axios.post(`${JUPITER_API}/swap`,{
       quoteResponse:q,userPublicKey:pubkey,wrapAndUnwrapSol:true,
-      computeUnitPriceMicroLamports:"auto",dynamicComputeUnitLimit:true},{timeout:20000})).data;
+      computeUnitPriceMicroLamports:1000,dynamicComputeUnitLimit:true,prioritizationFeeLamports:1000},{timeout:20000})).data;
     if(!sw?.swapTransaction)throw new Error("No swap transaction");
     const sig=await signAndSendTx(sw.swapTransaction,kp.secretKey);
     await new Promise(r=>setTimeout(r,5000));
