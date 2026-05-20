@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhaleBot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:system-ui,sans-serif;background:#f8fafc;color:#1e293b;min-height:100vh;}
+.nav{background:#1e293b;color:white;padding:12px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
+.nav h1{font-size:18px;font-weight:700;}
+.nav-links{display:flex;gap:4px;margin-left:auto;}
+.nav-links button{background:transparent;color:#94a3b8;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;}
+.nav-links button.active,.nav-links button:hover{background:#334155;color:white;}
+.page{display:none;padding:16px;max-width:480px;margin:0 auto;}
+.page.active{display:block;}
+.card{background:white;border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);}
+.card h2{font-size:14px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;}
+.stat{font-size:24px;font-weight:700;color:#1e293b;}
+.stat-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:8px;}
+.btn-green{background:#22c55e;color:white;}
+.btn-red{background:#ef4444;color:white;}
+.btn-blue{background:#3b82f6;color:white;}
+.btn:disabled{opacity:0.5;cursor:not-allowed;}
+.badge{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;}
+.badge-green{background:#dcfce7;color:#16a34a;}
+.badge-yellow{background:#fef9c3;color:#ca8a04;}
+.badge-red{background:#fee2e2;color:#dc2626;}
+.badge-blue{background:#dbeafe;color:#2563eb;}
+.badge-purple{background:#f3e8ff;color:#7c3aed;}
+.input{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:10px;outline:none;}
+.input:focus{border-color:#3b82f6;}
+.label{font-size:13px;color:#64748b;margin-bottom:4px;display:block;}
+.alert-item{padding:10px;border-left:3px solid #3b82f6;background:#f1f5f9;border-radius:0 8px 8px 0;margin-bottom:8px;}
+.alert-item .token{font-weight:700;font-size:14px;}
+.alert-item .meta{font-size:12px;color:#64748b;margin-top:2px;}
+.trade-item{padding:10px;border-radius:8px;background:#f8fafc;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+.trade-info .symbol{font-weight:700;font-size:14px;}
+.trade-info .detail{font-size:12px;color:#64748b;}
+.wallet-item{padding:10px;border-radius:8px;background:#f8fafc;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+.wallet-info .name{font-weight:600;font-size:14px;}
+.wallet-info .addr{font-size:11px;color:#94a3b8;font-family:monospace;}
+.wallet-info .bal{font-size:13px;color:#22c55e;font-weight:600;}
+.wallet-actions button{background:none;border:1px solid #e2e8f0;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:4px;}
+.running-indicator{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#dcfce7;border-radius:8px;margin-bottom:12px;}
+.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:pulse 1.5s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+.status-msg{padding:10px;background:#f1f5f9;border-radius:8px;font-size:13px;color:#475569;margin-bottom:10px;}
+.auth-container{max-width:360px;margin:40px auto;padding:20px;}
+.auth-logo{text-align:center;margin-bottom:24px;}
+.auth-logo h1{font-size:28px;font-weight:800;}
+.auth-logo p{color:#64748b;font-size:14px;}
+.tab-row{display:flex;gap:4px;margin-bottom:16px;}
+.tab-row button{flex:1;padding:8px;border:2px solid #e2e8f0;background:white;border-radius:8px;cursor:pointer;font-size:14px;}
+.tab-row button.active{border-color:#3b82f6;color:#3b82f6;}
+.error{color:#ef4444;font-size:13px;margin-bottom:8px;padding:8px;background:#fee2e2;border-radius:6px;}
+.success{color:#16a34a;font-size:13px;margin-bottom:8px;padding:8px;background:#dcfce7;border-radius:6px;}
+.pk-saved{font-size:12px;color:#16a34a;margin-bottom:8px;}
+</style>
+</head>
+<body>
+
+<!-- AUTH PAGE -->
+<div id="auth-page" class="page active">
+  <div class="auth-container">
+    <div class="auth-logo">
+      <div style="font-size:48px">🐋</div>
+      <h1>WhaleBot</h1>
+      <p>Memecoin Whale Tracker</p>
+    </div>
+    <div class="tab-row">
+      <button class="active" onclick="showAuthTab('login')">Login</button>
+      <button onclick="showAuthTab('register')">Register</button>
+    </div>
+    <div id="auth-msg"></div>
+    <div id="login-form">
+      <label class="label">Email</label>
+      <input class="input" type="email" id="login-email" placeholder="you@example.com">
+      <label class="label">Password</label>
+      <input class="input" type="password" id="login-password" placeholder="••••••">
+      <button class="btn btn-blue" onclick="doLogin()">Login</button>
+    </div>
+    <div id="register-form" style="display:none">
+      <label class="label">Username</label>
+      <input class="input" type="text" id="reg-username" placeholder="Your name">
+      <label class="label">Email</label>
+      <input class="input" type="email" id="reg-email" placeholder="you@example.com">
+      <label class="label">Password</label>
+      <input class="input" type="password" id="reg-password" placeholder="Min 6 chars">
+      <button class="btn btn-blue" onclick="doRegister()">Create Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+  <div class="nav">
+    <span>🐋</span>
+    <h1>WhaleBot</h1>
+    <div class="nav-links">
+      <button class="active" onclick="showPage('dashboard')">Home</button>
+      <button onclick="showPage('wallets')">Wallets</button>
+      <button onclick="showPage('trades')">Trades</button>
+      <button onclick="showPage('settings')">Settings</button>
+      <button onclick="doLogout()" style="color:#ef4444">Exit</button>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dashboard-page" class="page active">
+    <div id="bot-status-bar" style="display:none" class="running-indicator">
+      <div class="dot"></div>
+      <span style="font-size:13px;font-weight:600;color:#16a34a">Bot Running — Scanning every 2min</span>
+    </div>
+    <div id="bot-msg" class="status-msg" style="display:none"></div>
+    <div class="stat-row">
+      <div class="card"><h2>Profit</h2><div class="stat" id="stat-profit">0 SOL</div></div>
+      <div class="card"><h2>Trades</h2><div class="stat" id="stat-trades">0</div></div>
+      <div class="card"><h2>Win Rate</h2><div class="stat" id="stat-winrate">0%</div></div>
+      <div class="card"><h2>Alerts</h2><div class="stat" id="stat-alerts">0</div></div>
+    </div>
+    <button class="btn btn-green" id="start-btn" onclick="startBot()">▶ START Bot</button>
+    <button class="btn btn-red" id="stop-btn" onclick="stopBot()" style="display:none">⏹ STOP Bot</button>
+    <div class="card">
+      <h2>Recent Whale Alerts</h2>
+      <div id="alerts-list"><p style="color:#94a3b8;font-size:13px">No alerts yet. Start the bot to scan.</p></div>
+    </div>
+  </div>
+
+  <!-- WALLETS -->
+  <div id="wallets-page" class="page">
+    <div class="card">
+      <h2>Add Wallet (Optional)</h2>
+      <label class="label">Wallet Name</label>
+      <input class="input" type="text" id="wallet-name" placeholder="My Wallet">
+      <label class="label">Solana Address</label>
+      <input class="input" type="text" id="wallet-address" placeholder="Paste Solana address...">
+      <div id="wallet-msg"></div>
+      <button class="btn btn-blue" onclick="addWallet()">Add Wallet</button>
+    </div>
+    <div id="wallets-list"></div>
+  </div>
+
+  <!-- TRADES -->
+  <div id="trades-page" class="page">
+    <div class="card">
+      <h2>Trade History</h2>
+      <div id="trades-list"><p style="color:#94a3b8;font-size:13px">No trades yet.</p></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="settings-page" class="page">
+    <div class="card">
+      <h2>Trading Wallet</h2>
+      <label class="label">Private Key (Base58)</label>
+      <div id="pk-status" class="pk-saved" style="display:none">✅ Private key saved</div>
+      <input class="input" type="password" id="trading-pk" placeholder="Paste private key...">
+      <p style="font-size:12px;color:#ef4444;margin-bottom:10px;">⚠️ Only use a dedicated trading wallet</p>
+    </div>
+    <div class="card">
+      <h2>Bot Config</h2>
+      <label class="label">Buy Amount (SOL)</label>
+      <input class="input" type="number" id="buy-amount" value="0.01" step="0.01">
+      <label class="label">Profit Target (%)</label>
+      <input class="input" type="number" id="profit-target" value="5" step="1">
+      <div id="settings-msg"></div>
+      <button class="btn btn-blue" onclick="saveSettings()">💾 Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let user = null;
+const API = '';
+
+function api(path, opts={}) {
+  return fetch(API + path, {
+    headers: {'Content-Type':'application/json'},
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  }).then(r => r.json());
+}
+
+function lsGet(k){try{return localStorage.getItem(k);}catch{return null;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch{}}
+function lsDel(k){try{localStorage.removeItem(k);}catch{}}
+
+function showAuthTab(tab) {
+  document.getElementById('login-form').style.display = tab==='login'?'block':'none';
+  document.getElementById('register-form').style.display = tab==='register'?'block':'none';
+  document.querySelectorAll('.tab-row button').forEach((b,i)=>b.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
+  document.getElementById('auth-msg').innerHTML='';
+}
+
+async function doLogin() {
+  const email=document.getElementById('login-email').value;
+  const password=document.getElementById('login-password').value;
+  const res = await api('/api/auth/login',{method:'POST',body:{email,password}});
+  if(res.error){document.getElementById('auth-msg').innerHTML=`<div class="error">${res.error}</div>`;return;}
+  user = res.user;
+  lsSet('wb_user', JSON.stringify(user));
+  await showApp();
+}
+
+async function doRegister() {
+  const username=document.getElementById('reg-username').value;
+  const email=document.getElementById('reg-email').value;
+  const password=document.getElementById('reg-password').value;
+  const res = await api('/api/auth/register',{method:'POST',body:{email,password,username}});
+  if(res.error){document.getElementById('auth-msg').innerHTML=`<div class="error">${res.error}</div>`;return;}
+  user = res.user;
+  lsSet('wb_user', JSON.stringify(user));
+  await showApp();
+}
+
+function doLogout() {
+  user=null;
+  lsDel('wb_user');
+  document.getElementById('app').style.display='none';
+  document.getElementById('auth-page').style.display='block';
+  document.getElementById('auth-page').classList.add('active');
+}
+
+async function showApp() {
+  document.getElementById('auth-page').classList.remove('active');
+  document.getElementById('auth-page').style.display='none';
+  document.getElementById('app').style.display='block';
+
+  // Auto-restore private key to server from localStorage
+  const savedPk = lsGet('wb_pk_'+user.id);
+  if(savedPk) {
+    const s = await api('/api/bot-settings/'+user.id);
+    if(!s.hasTradingWallet) {
+      await api('/api/bot-settings/'+user.id, {method:'POST', body:{tradingPrivateKey:savedPk}});
+      console.log('[WhaleBot] Private key auto-restored');
+    }
+  }
+
+  loadDashboard();
+  loadSettings();
+}
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
+  document.getElementById(name+'-page').classList.add('active');
+  event.target.classList.add('active');
+  if(name==='dashboard') loadDashboard();
+  if(name==='wallets') loadWallets();
+  if(name==='trades') loadTrades();
+  if(name==='settings') loadSettings();
+}
+
+async function loadDashboard() {
+  if(!user) return;
+  const [stats, alerts, settings] = await Promise.all([
+    api('/api/stats/'+user.id),
+    api('/api/whale-alerts/'+user.id),
+    api('/api/bot-settings/'+user.id)
+  ]);
+  document.getElementById('stat-profit').textContent = (stats.totalProfit>=0?'+':'')+stats.totalProfit+' SOL';
+  document.getElementById('stat-trades').textContent = stats.totalTrades;
+  document.getElementById('stat-winrate').textContent = stats.winRate+'%';
+  document.getElementById('stat-alerts').textContent = stats.whaleAlerts;
+  const running = settings.isRunning;
+  document.getElementById('bot-status-bar').style.display = running?'flex':'none';
+  document.getElementById('start-btn').style.display = running?'none':'block';
+  document.getElementById('stop-btn').style.display = running?'block':'none';
+  const alertsEl = document.getElementById('alerts-list');
+  if(!alerts.length){alertsEl.innerHTML='<p style="color:#94a3b8;font-size:13px">No alerts yet. Start the bot to scan.</p>';return;}
+  alertsEl.innerHTML = alerts.slice(0,10).map(a=>`
+    <div class="alert-item">
+      <div class="token">${a.tokenSymbol} <span class="badge badge-blue">${a.confidence}% confidence</span> ${a.isRealWhale?'<span class="badge badge-purple">🐋 Real Whale</span>':''}</div>
+      <div class="meta">${a.tokenName} • ${a.whaleCount} whales • $${Math.round(a.netBuyUsd).toLocaleString()} • ${a.platform}</div>
+    </div>`).join('');
+}
+
+async function startBot() {
+  const btn=document.getElementById('start-btn');
+  btn.disabled=true; btn.textContent='Starting...';
+  const res = await api('/api/bot/start/'+user.id,{method:'POST'});
+  btn.disabled=false; btn.textContent='▶ START Bot';
+  const msgEl=document.getElementById('bot-msg');
+  if(res.error){msgEl.style.display='block';msgEl.textContent='❌ '+res.error;return;}
+  msgEl.style.display='block'; msgEl.textContent='✅ '+res.message;
+  setTimeout(()=>{msgEl.style.display='none';loadDashboard();},3000);
+}
+
+async function stopBot() {
+  const btn=document.getElementById('stop-btn');
+  btn.disabled=true; btn.textContent='Stopping...';
+  const res = await api('/api/bot/stop/'+user.id,{method:'POST'});
+  btn.disabled=false; btn.textContent='⏹ STOP Bot';
+  const msgEl=document.getElementById('bot-msg');
+  msgEl.style.display='block'; msgEl.textContent='🛑 '+res.message;
+  setTimeout(()=>{msgEl.style.display='none';loadDashboard();},4000);
+}
+
+async function loadWallets() {
+  if(!user) return;
+  const wallets = await api('/api/wallets/'+user.id);
+  const el=document.getElementById('wallets-list');
+  if(!wallets.length){el.innerHTML='<div class="card"><p style="color:#94a3b8;font-size:13px">No wallets added.</p></div>';return;}
+  el.innerHTML=wallets.map(w=>`
+    <div class="wallet-item">
+      <div class="wallet-info">
+        <div class="name">${w.name} ${w.isActive?'<span class="badge badge-green">Active</span>':''}</div>
+        <div class="addr">${w.address.slice(0,8)}...${w.address.slice(-6)}</div>
+        <div class="bal">${(w.balance||0).toFixed(4)} SOL</div>
+      </div>
+      <div class="wallet-actions">
+        ${!w.isActive?`<button onclick="activateWallet(${w.id})">Set Active</button>`:''}
+        <button onclick="deleteWallet(${w.id})" style="color:#ef4444">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+async function addWallet() {
+  const name=document.getElementById('wallet-name').value;
+  const address=document.getElementById('wallet-address').value;
+  const msgEl=document.getElementById('wallet-msg');
+  const res=await api('/api/wallets',{method:'POST',body:{userId:user.id,name,address}});
+  if(res.error){msgEl.innerHTML=`<div class="error">${res.error}</div>`;return;}
+  document.getElementById('wallet-name').value='';
+  document.getElementById('wallet-address').value='';
+  msgEl.innerHTML=`<div class="success">✅ Wallet added!</div>`;
+  setTimeout(()=>{msgEl.innerHTML='';loadWallets();},1500);
+}
+
+async function deleteWallet(id) {
+  await api('/api/wallets/'+id,{method:'DELETE',body:{userId:user.id}});
+  loadWallets();
+}
+
+async function activateWallet(id) {
+  await api('/api/wallets/'+id+'/activate',{method:'POST',body:{userId:user.id}});
+  loadWallets();
+}
+
+async function loadTrades() {
+  if(!user) return;
+  const trades=await api('/api/trades/'+user.id);
+  const el=document.getElementById('trades-list');
+  if(!trades.length){el.innerHTML='<p style="color:#94a3b8;font-size:13px">No trades yet.</p>';return;}
+  el.innerHTML=trades.slice(0,30).map(t=>`
+    <div class="trade-item">
+      <div class="trade-info">
+        <div class="symbol">${t.action==='BUY'?'🟢':'🔴'} ${t.tokenSymbol}</div>
+        <div class="detail">${t.amountSOL} SOL @ $${parseFloat(t.price||0).toFixed(6)}</div>
+        ${t.txHash?`<div style="font-size:10px;color:#94a3b8">${t.txHash.slice(0,12)}...</div>`:''}
+      </div>
+      <div style="text-align:right">
+        ${t.profit!=null?`<div style="font-weight:700;color:${t.profit>=0?'#22c55e':'#ef4444'}">${t.profit>=0?'+':''}${t.profit} SOL</div>`:''}
+        <div style="font-size:11px;color:#94a3b8">${new Date(t.timestamp).toLocaleTimeString()}</div>
+      </div>
+    </div>`).join('');
+}
+
+async function loadSettings() {
+  if(!user) return;
+  const s=await api('/api/bot-settings/'+user.id);
+  document.getElementById('buy-amount').value=s.buyAmount||0.01;
+  document.getElementById('profit-target').value=s.profitTarget||5;
+  // Show saved pk status
+  const savedPk = lsGet('wb_pk_'+user.id);
+  const pkStatus = document.getElementById('pk-status');
+  if(savedPk || s.hasTradingWallet) {
+    pkStatus.style.display='block';
+    document.getElementById('trading-pk').placeholder='Private key saved ✅ (paste new to update)';
+  } else {
+    pkStatus.style.display='none';
+  }
+}
+
+async function saveSettings() {
+  const tradingPrivateKey=document.getElementById('trading-pk').value.trim();
+  const buyAmount=parseFloat(document.getElementById('buy-amount').value);
+  const profitTarget=parseFloat(document.getElementById('profit-target').value);
+  const body={buyAmount,profitTarget};
+  if(tradingPrivateKey) {
+    body.tradingPrivateKey=tradingPrivateKey;
+    lsSet('wb_pk_'+user.id, tradingPrivateKey); // Save to localStorage
+  }
+  const res=await api('/api/bot-settings/'+user.id,{method:'POST',body});
+  const el=document.getElementById('settings-msg');
+  if(res.error){
+    el.innerHTML=`<div class="error">${res.error}</div>`;
+  } else {
+    el.innerHTML=`<div class="success">✅ Settings saved!</div>`;
+    document.getElementById('trading-pk').value='';
+    loadSettings();
+  }
+  setTimeout(()=>el.innerHTML='',3000);
+}
+
+// Init - auto login from localStorage
+window.onload=async()=>{
+  const saved=lsGet('wb_user');
+  if(saved){
+    user=JSON.parse(saved);
+    await showApp();
+  }
+};
+</script>
+</body>
+</html>
