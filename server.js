@@ -115,7 +115,7 @@ const S={
   upsertSettings:(uid,d)=>{
     let s=DB.settings.find(s=>s.userId===uid);
     if(s)Object.assign(s,d);
-    else{s={userId:uid,buyAmount:0.111,profitTarget:1,stopLoss:5,maxPositions:3,isRunning:false,...d};DB.settings.push(s);}
+    else{s={userId:uid,buyAmount:0.119,profitTarget:1,stopLoss:5,maxPositions:5,isRunning:false,...d};DB.settings.push(s);}
     saveDB();return s;
   },
   setBotRunning:(uid,v)=>{const s=DB.settings.find(s=>s.userId===uid);if(s){s.isRunning=v;saveDB();}},
@@ -232,6 +232,7 @@ async function jupiterSell(pk58,inputMint,tokenAmount){
 
 // Established tokens only
 const TOKENS=[
+  // Original 15
   {a:"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",s:"BONK"},
   {a:"EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",s:"WIF"},
   {a:"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",s:"POPCAT"},
@@ -247,6 +248,42 @@ const TOKENS=[
   {a:"SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y",s:"SHDW"},
   {a:"nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7",s:"NOS"},
   {a:"8wXtPeU6557ETkp9WHFY1n1EcU6NxDvbAggHGzmh3iEK",s:"SLERF"},
+  // New 35 - top Solana ecosystem tokens
+  {a:"6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",s:"TRUMP"},
+  {a:"A8C3xuqscfmyLrte3VmTqrAq8kgMASius9AFNANwpump",s:"FARTCOIN"},
+  {a:"Hax9LTgsQkze1yFycEBtoXpFfMDGxHsCUynFRJuExdXs",s:"PENGU"},
+  {a:"jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",s:"JTO"},
+  {a:"rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",s:"RENDER"},
+  {a:"WENWENvqqNya429ubCdR81ZmD69brwQaaBYY6p3LCpk",s:"WEN"},
+  {a:"27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4",s:"IO"},
+  {a:"EchesyfXePKdLtoiZSL8pBe8Myagyy8ZRqsACNCFGnvp",s:"FIDA"},
+  {a:"5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm",s:"LAYER"},
+  {a:"Hjw6bEcHtbHGpQr8onG3izfJY5DJiWdt7uk2BfdSpump",s:"PUMP"},
+  {a:"2WDEgFnZuJ2TDCCDsXqKKuGJY5NyX7fWGBpfCFqpump",s:"GIGA"},
+  {a:"KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS",s:"KMNO"},
+  {a:"METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m",s:"META"},
+  {a:"mfuiKMJHaYFNGMEWfS3TsPvAhHJT2BusBCBfhuvTKSY",s:"MYRO"},
+  {a:"4LLbsb5ReP3yEtYzmXewyGjcir5uXtKFURtaEUVC2AHs",s:"MNGO"},
+  {a:"HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",s:"AI16Z"},
+  {a:"9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump",s:"FWOG"},
+  {a:"8Ki8DpuWNxu9VsS3kQbarsCWMcFGWkzzA8pUPto9zBd5",s:"LOCKIN"},
+  {a:"GtDZKAqvMZMnti46ZewMiXCa4oXF4bZxwQPoKdy1uZK",s:"PNUT"},
+  {a:"Cn5Ne1vmR9NqEkSJ7HptjFBMFKSSYos1c5gBPSGDSrGH",s:"ACT"},
+  {a:"ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzc8yy",s:"MOODENG"},
+  {a:"HxRELUQfvvjToVbacjr9YECdfQMUqGgPYB68jVDHejpG",s:"CHILLGUY"},
+  {a:"ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",s:"BOME"},
+  {a:"85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ",s:"WORMHOLE"},
+  {a:"GFX1ZjR2P15tmrSwow6FjyDYcEkoNAbMoGfMJH4TBcJA",s:"GOFX"},
+  {a:"DtR4D9FtVoTX2569gaL837ZgrB6wNjj6tkmnX9Rdk9B2",s:"DOGE"},
+  {a:"CnxJRnNnBCDVd8b8GnGzB3YBnzqpqkwAknXiEWkVpump",s:"GORK"},
+  {a:"Fishy64jCaa3ooqXw7BkM9N8bKBLLAe8kGaFjFUqbzUJ",s:"FISH"},
+  {a:"4vMsoUT2BWatFweudnQM1xedRLfJgJ7hswhcpz4xgBTy",s:"WHALES"},
+  {a:"7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",s:"SAMO"},
+  {a:"5KV2W2XPdSo97wQWcuAf9XFHgbcPMRNzauXnz7fhpump",s:"HARAMBE"},
+  {a:"9LzCMqDgTKYz9Drzqnpgee3SGa89up3a247ypMj2xrqM",s:"AGNT"},
+  {a:"3psH1Mj1f7yUfaD5gh6Zj7epFqOUX51TX9bKFmui3B9U",s:"EPIK"},
+  {a:"Bm3gAJABHkFsLGZyWbDkP6xFMZM6Lnp3bM1yCQxpump",s:"SIGMA"},
+  {a:"GdW2SFdDNY4VYAmgdUKt4AkPzUkT8ZPVqEbNnpZpump",s:"UWU"},
 ];
 
 async function detectSignals(){
@@ -308,7 +345,7 @@ async function runScan(uid,pk,buyAmt,maxPos){
   const s=S.getSettings(uid);
   if(!s?.isRunning)return;
   const positions=S.getPositions(uid);
-  const max=maxPos||3;
+  const max=maxPos||5;
   if(positions.length>=max)return;
   if(buyingLock[uid]){console.log("[Bot] Buy in progress, skip scan");return;}
   const kp=pkToKeypair(pk);
@@ -397,7 +434,7 @@ async function runPriceCheck(uid,pk,profitPct,slPct){
               S.removePosition(uid,p.tokenAddress);
               sellingSet.delete(sellKey);
               // trigger immediate scan to fill the open slot
-              setTimeout(()=>runScan(uid,pk,s.buyAmount||0.111,s.maxPositions||3),2000);
+              setTimeout(()=>runScan(uid,pk,s.buyAmount||0.119,s.maxPositions||5),2000);
             }else{
               // FIX BUG2: sell failed → keep position, clear lock so it retries next cycle
               console.log(`[Bot] SELL failed for ${p.tokenSymbol}: ${sr.error} — will retry`);
@@ -458,7 +495,7 @@ async function autoResume(){
   const running=DB.settings.filter(s=>s.isRunning&&s.tradingPrivateKey);
   for(const s of running){
     console.log(`[Bot] Auto-resume uid:${s.userId} positions:${S.getPositions(s.userId).length}`);
-    await startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.111,s.profitTarget||1,s.stopLoss||5,s.maxPositions||3);
+    await startBot(s.userId,s.tradingPrivateKey,s.buyAmount||0.119,s.profitTarget||1,s.stopLoss||5,s.maxPositions||5);
   }
 }
 
@@ -497,7 +534,7 @@ app.post("/api/wallets/:id/activate",(req,res)=>{S.setActive(parseInt(req.params
 app.get("/api/bot-settings/:uid",(req,res)=>{
   const s=S.getSettings(parseInt(req.params.uid));
   if(s){const{tradingPrivateKey:pk,...safe}=s;return res.json({...safe,hasTradingWallet:!!pk});}
-  res.json({buyAmount:0.111,profitTarget:1,stopLoss:5,maxPositions:3,isRunning:false,hasTradingWallet:false});
+  res.json({buyAmount:0.119,profitTarget:1,stopLoss:5,maxPositions:5,isRunning:false,hasTradingWallet:false});
 });
 app.post("/api/bot-settings/:uid",(req,res)=>{
   const uid=parseInt(req.params.uid);
@@ -517,7 +554,7 @@ app.post("/api/bot/start/:uid",async(req,res)=>{
   const s=S.getSettings(uid);
   if(!s?.tradingPrivateKey)return res.status(400).json({error:"Add private key in Settings first"});
   S.setBotRunning(uid,true);
-  await startBot(uid,s.tradingPrivateKey,s.buyAmount||0.111,s.profitTarget||1,s.stopLoss||5,s.maxPositions||3);
+  await startBot(uid,s.tradingPrivateKey,s.buyAmount||0.119,s.profitTarget||1,s.stopLoss||5,s.maxPositions||5);
   res.json({success:true,message:"Bot started!"});
 });
 app.post("/api/bot/stop/:uid",async(req,res)=>{
@@ -554,7 +591,7 @@ if(fs.existsSync(pub)){
 }
 
 app.listen(PORT,"0.0.0.0",async()=>{
-  console.log(`\nWhaleBot v16-FIXED\n[✓] BUG1 FIXED: asLegacyTransaction=true (trades actually work now)\n[✓] BUG2 FIXED: position only removed on successful sell\n[✓] BUG5 FIXED: _selling uses in-memory Set (survives restarts)\n[✓] BUG6 FIXED: priceCheckLock prevents double-sell\n[✓] BUG8 FIXED: 409 SHA conflict retries immediately\n[✓] BUG9 FIXED: slot count re-checked per buy iteration\n[✓] BUG10 FIXED: autoResume after loadDB completes\n[✓] BUG11 FIXED: async file writes (non-blocking)\n[✓] BUG13 FIXED: reduce() for initNid (no RangeError)\n[✓] 3min scan | 15sec price check | 1% profit | 5% SL | 3 pos x 0.111 SOL\n`);
+  console.log(`\nWhaleBot v17\n[✓] BUG1 FIXED: asLegacyTransaction=true (trades actually work now)\n[✓] BUG2 FIXED: position only removed on successful sell\n[✓] BUG5 FIXED: _selling uses in-memory Set (survives restarts)\n[✓] BUG6 FIXED: priceCheckLock prevents double-sell\n[✓] BUG8 FIXED: 409 SHA conflict retries immediately\n[✓] BUG9 FIXED: slot count re-checked per buy iteration\n[✓] BUG10 FIXED: autoResume after loadDB completes\n[✓] BUG11 FIXED: async file writes (non-blocking)\n[✓] BUG13 FIXED: reduce() for initNid (no RangeError)\n[✓] 50 tokens scanned | 3min scan | 15sec price check | 1% profit | 5% SL | 5 pos x 0.119 SOL (~$10)\n[✓] ঘণ্টায় ১০০ trade সম্ভব (5 positions x 20 cycles)\n`);
   await loadDB();
   initNid();
   await autoResume();
