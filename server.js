@@ -115,7 +115,7 @@ const S={
   upsertSettings:(uid,d)=>{
     let s=DB.settings.find(s=>s.userId===uid);
     if(s)Object.assign(s,d);
-    else{s={userId:uid,buyAmount:0.119,profitTarget:1,stopLoss:5,maxPositions:5,isRunning:false,...d};DB.settings.push(s);}
+    else{s={userId:uid,buyAmount:0.119,profitTarget:1,minProfit:0.5,stopLoss:5,maxPositions:5,isRunning:false,...d};DB.settings.push(s);}
     saveDB();return s;
   },
   setBotRunning:(uid,v)=>{const s=DB.settings.find(s=>s.userId===uid);if(s){s.isRunning=v;saveDB();}},
@@ -412,6 +412,7 @@ async function runPriceCheck(uid,pk,profitPct,slPct){
     if(!positions.length)return;
     const sl=slPct||5;
     const profit=profitPct||1;
+    const minProfit=S.getSettings(uid)?.minProfit||0.5;
     for(const p of positions){
       const sellKey=`${uid}:${p.tokenAddress}`;
       // FIX BUG5: use in-memory Set instead of property on DB object
@@ -428,7 +429,8 @@ async function runPriceCheck(uid,pk,profitPct,slPct){
         const pos=S.getPositions(uid).find(x=>x.tokenAddress===p.tokenAddress);
         const peak=pos?.highestPrice||cur;
         const trailDrop=peak>0?((peak-cur)/peak)*100:0;
-        const hitProfit=pnl>=profit;
+        // Sell at minProfit (0.5%) minimum, target is profit (1%)
+        const hitProfit=pnl>=minProfit;
         const hitFixed=pnl<=-sl;
         const hitTrail=pnl>=0.5&&trailDrop>=sl;
         if(Math.abs(pnl)>0.1)
@@ -523,7 +525,7 @@ app.post("/api/auth/register",(req,res)=>{
   if(password.length<6)return res.status(400).json({error:"Password min 6 chars"});
   if(S.getUserByEmail(email))return res.status(400).json({error:"Email already exists"});
   const u=S.createUser({email,password:hashPw(password),username});
-  S.upsertSettings(u.id,{});
+  S.upsertSettings(u.id,{buyAmount:0.119,profitTarget:1,minProfit:0.5,stopLoss:5,maxPositions:5,isRunning:false});
   res.json({user:{id:u.id,email:u.email,username:u.username}});
 });
 app.post("/api/auth/login",(req,res)=>{
@@ -551,14 +553,15 @@ app.post("/api/wallets/:id/activate",(req,res)=>{S.setActive(parseInt(req.params
 app.get("/api/bot-settings/:uid",(req,res)=>{
   const s=S.getSettings(parseInt(req.params.uid));
   if(s){const{tradingPrivateKey:pk,...safe}=s;return res.json({...safe,hasTradingWallet:!!pk});}
-  res.json({buyAmount:0.119,profitTarget:1,stopLoss:5,maxPositions:5,isRunning:false,hasTradingWallet:false});
+  res.json({buyAmount:0.119,profitTarget:1,minProfit:0.5,stopLoss:5,maxPositions:5,isRunning:false,hasTradingWallet:false});
 });
 app.post("/api/bot-settings/:uid",(req,res)=>{
   const uid=parseInt(req.params.uid);
-  const{buyAmount,profitTarget,stopLoss,maxPositions,tradingPrivateKey}=req.body;
+  const{buyAmount,profitTarget,minProfit,stopLoss,maxPositions,tradingPrivateKey}=req.body;
   const d={};
   if(buyAmount!==undefined)d.buyAmount=parseFloat(buyAmount);
   if(profitTarget!==undefined)d.profitTarget=parseFloat(profitTarget);
+  if(minProfit!==undefined)d.minProfit=parseFloat(minProfit);
   if(stopLoss!==undefined)d.stopLoss=parseFloat(stopLoss);
   if(maxPositions!==undefined)d.maxPositions=parseInt(maxPositions);
   if(tradingPrivateKey!==undefined)d.tradingPrivateKey=tradingPrivateKey;
@@ -608,7 +611,7 @@ if(fs.existsSync(pub)){
 }
 
 app.listen(PORT,"0.0.0.0",async()=>{
-  console.log(`\nWhaleBot v17\n[✓] BUG1 FIXED: asLegacyTransaction=true (trades actually work now)\n[✓] BUG2 FIXED: position only removed on successful sell\n[✓] BUG5 FIXED: _selling uses in-memory Set (survives restarts)\n[✓] BUG6 FIXED: priceCheckLock prevents double-sell\n[✓] BUG8 FIXED: 409 SHA conflict retries immediately\n[✓] BUG9 FIXED: slot count re-checked per buy iteration\n[✓] BUG10 FIXED: autoResume after loadDB completes\n[✓] BUG11 FIXED: async file writes (non-blocking)\n[✓] BUG13 FIXED: reduce() for initNid (no RangeError)\n[✓] 50 tokens scanned | 3min scan | 15sec price check | 1% profit | 5% SL | 5 pos x 0.119 SOL (~$10)\n[✓] ঘণ্টায় ১০০ trade সম্ভব (5 positions x 20 cycles)\n`);
+  console.log(`\nWhaleBot v18\n[✓] BUG1 FIXED: asLegacyTransaction=true (trades actually work now)\n[✓] BUG2 FIXED: position only removed on successful sell\n[✓] BUG5 FIXED: _selling uses in-memory Set (survives restarts)\n[✓] BUG6 FIXED: priceCheckLock prevents double-sell\n[✓] BUG8 FIXED: 409 SHA conflict retries immediately\n[✓] BUG9 FIXED: slot count re-checked per buy iteration\n[✓] BUG10 FIXED: autoResume after loadDB completes\n[✓] BUG11 FIXED: async file writes (non-blocking)\n[✓] BUG13 FIXED: reduce() for initNid (no RangeError)\n[✓] 50 tokens scanned | 3min scan | 15sec price check | 1% profit | 5% SL | 5 pos x 0.119 SOL (~$10)\n[✓] Sell at 0.5% min profit, 1% target\n[✓] Buy amount flexible ($1-$100)\n[✓] Registration-এ সব settings auto-ready\n[✓] ঘণ্টায় ১০০ trade (5 positions x 20 cycles)\n`);
   await loadDB();
   initNid();
   await autoResume();
