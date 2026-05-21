@@ -288,9 +288,26 @@ const TOKENS=[
 
 async function detectSignals(){
   try{
-    const results=await Promise.all(TOKENS.map(t=>
-      axios.get(`https://api.dexscreener.com/latest/dex/tokens/${t.a}`,{timeout:8000}).catch(()=>null)
-    ));
+    // DexScreener batch API: up to 30 addresses per call
+    const CHUNK=30;
+    const allPairs=[];
+    for(let i=0;i<TOKENS.length;i+=CHUNK){
+      const chunk=TOKENS.slice(i,i+CHUNK);
+      const addrs=chunk.map(t=>t.a).join(',');
+      try{
+        const r=await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`,{timeout:15000});
+        if(r.data?.pairs)allPairs.push(...r.data.pairs);
+      }catch{}
+      if(i+CHUNK<TOKENS.length)await new Promise(r=>setTimeout(r,500));
+    }
+    // group pairs by token address
+    const byToken={};
+    for(const p of allPairs){
+      const addr=p.baseToken?.address||'';
+      if(!byToken[addr])byToken[addr]=[];
+      byToken[addr].push(p);
+    }
+    const results=Object.values(byToken).map(pairs=>({data:{pairs}}));
     const signals=[];
     for(const r of results){
       if(!r?.data?.pairs)continue;
